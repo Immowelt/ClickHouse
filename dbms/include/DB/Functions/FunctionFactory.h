@@ -33,7 +33,7 @@ public:
 	FunctionPtr tryGet(const std::string & name, const Context & context) const;	/// Returns nullptr if not found.
 
 	/// No locking, you must register all functions before usage of get, tryGet.
-	template <typename F> void registerFunction()
+	template<typename F> void registerFunction()
 	{
 		static_assert(std::is_same<decltype(&F::create), Creator>::value, "F::create has incorrect type");
 		functions[F::name] = &F::create;

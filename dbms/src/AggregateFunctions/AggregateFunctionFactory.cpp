@@ -49,6 +49,7 @@ void registerAggregateFunctionUniqUpTo(AggregateFunctionFactory & factory);
 void registerAggregateFunctionDebug(AggregateFunctionFactory & factory);
 
 AggregateFunctionPtr createAggregateFunctionArray(AggregateFunctionPtr & nested);
+AggregateFunctionPtr createAggregateFunctionForEach(AggregateFunctionPtr & nested);
 AggregateFunctionPtr createAggregateFunctionIf(AggregateFunctionPtr & nested);
 AggregateFunctionPtr createAggregateFunctionState(AggregateFunctionPtr & nested);
 AggregateFunctionPtr createAggregateFunctionMerge(AggregateFunctionPtr & nested);
@@ -146,11 +147,7 @@ AggregateFunctionPtr AggregateFunctionFactory::getImpl(const String & name, cons
 {
 	auto it = aggregate_functions.find(name);
 	if (it != aggregate_functions.end())
-	{
-		auto it = aggregate_functions.find(name);
-		if (it != aggregate_functions.end())
-			return it->second(name, argument_types);
-	}
+		return it->second(name, argument_types);
 
 	if (recursion_level == 0)
 	{
@@ -202,7 +199,7 @@ AggregateFunctionPtr AggregateFunctionFactory::getImpl(const String & name, cons
 
 	if ((recursion_level <= 3) && endsWith(name, "Array"))
 	{
-		/// Для агрегатных функций вида aggArray, где agg - имя другой агрегатной функции.
+		/// For functions like aggArray, where 'agg' is the name of another aggregate function
 		size_t num_agruments = argument_types.size();
 
 		DataTypes nested_arguments;
@@ -214,10 +211,28 @@ AggregateFunctionPtr AggregateFunctionFactory::getImpl(const String & name, cons
 				throw Exception("Illegal type " + argument_types[i]->getName() + " of argument #" + toString(i + 1) +
 					" for aggregate function " + name + ". Must be array.", ErrorCodes::ILLEGAL_TYPE_OF_ARGUMENT);
 		}
-		/// + 3, чтобы ни один другой модификатор не мог идти перед Array
+		/// + 3, so that no other modifier can stay before Array. Note that the modifiers Array and ForEach are mutual exclusive.
 		AggregateFunctionPtr nested = get(trimRight(name, "Array"), nested_arguments, recursion_level + 3);
 		return createAggregateFunctionArray(nested);
 	}
+
+	if ((recursion_level <= 3) && endsWith(name, "ForEach"))
+	{
+		/// For functions like aggForEach, where 'agg' is the name of another aggregate function
+		if (argument_types.size() != 1)
+			throw Exception("Incorrect number of arguments for aggregate function " + name, ErrorCodes::NUMBER_OF_ARGUMENTS_DOESNT_MATCH);
+
+		DataTypes nested_arguments;
+		if (const DataTypeArray * array = typeid_cast<const DataTypeArray *>(&*argument_types[0]))
+			nested_arguments.push_back(array->getNestedType());
+		else
+			throw Exception("Illegal type " + argument_types[0]->getName() + " of argument for aggregate function " + name + ". Must be array.", ErrorCodes::ILLEGAL_TYPE_OF_ARGUMENT);
+
+		/// + 3, so that no other modifier can stay before ForEach. Note that the modifiers Array and ForEach are mutual exclusive.
+		AggregateFunctionPtr nested = get(trimRight(name, "ForEach"), nested_arguments, recursion_level + 3);
+		return createAggregateFunctionForEach(nested);
+	}
+
 
 	throw Exception("Unknown aggregate function " + name, ErrorCodes::UNKNOWN_AGGREGATE_FUNCTION);
 }
@@ -257,6 +272,13 @@ bool AggregateFunctionFactory::isAggregateFunctionName(const String & name, int 
 		/// + 3, чтобы ни один другой модификатор не мог идти перед Array
 		return isAggregateFunctionName(trimRight(name, "Array"), recursion_level + 3);
 	}
+
+	if ((recursion_level <= 3) && endsWith(name, "ForEach"))
+	{
+		/// + 3, чтобы ни один другой модификатор не мог идти перед Array
+		return isAggregateFunctionName(trimRight(name, "ForEach"), recursion_level + 3);
+	}
+
 
 	return false;
 }
