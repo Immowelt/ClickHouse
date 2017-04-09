@@ -5,9 +5,6 @@
 #include <DB/DataTypes/DataTypesNumberFixed.h>
 #include <DB/AggregateFunctions/IAggregateFunction.h>
 
-#include <common/logger_useful.h>
-
-
 namespace DB
 {
 
@@ -140,6 +137,13 @@ public:
 
 ////////////////////////////////7
 
+struct AggregateFunctionForEachData
+{
+	size_t dynamic_array_size;
+	char* array_of_aggregate_datas;
+public:
+	AggregateFunctionForEachData(): dynamic_array_size(0), array_of_aggregate_datas(nullptr) {}
+};
 
 
 
@@ -148,11 +152,33 @@ class AggregateFunctionForEach final : public IAggregateFunction
 private:
 	AggregateFunctionPtr nested_func_owner;
 	IAggregateFunction * nested_func;
-	UInt64 array_size = 3;
 
+
+	AggregateFunctionForEachData* ensureAggregateData(AggregateDataPtr place, size_t newSize, Arena * arena) const
+	{
+		AggregateFunctionForEachData* data = reinterpret_cast<AggregateFunctionForEachData*>(place);
+		///Ensure we have aggreate states for array_size elements, allocate from arena if needed
+		if (data->dynamic_array_size < newSize)
+		{
+			size_t new_memory_amount = newSize *nested_func->sizeOfData();
+
+			arena->allocContinue(
+					new_memory_amount,
+					const_cast<const char* &>(data->array_of_aggregate_datas));
+
+			for(size_t i = data->dynamic_array_size; i < newSize; ++i)
+			{
+				char* aggregateData = data->array_of_aggregate_datas + i * nested_func->sizeOfData();
+				nested_func->create(aggregateData);
+			}
+			data->dynamic_array_size = newSize;
+		}
+		return data;
+	}
 
 public:
-	AggregateFunctionForEach(AggregateFunctionPtr nested_) : nested_func_owner(nested_), nested_func(nested_func_owner.get()) {}
+	AggregateFunctionForEach(AggregateFunctionPtr nested_) : nested_func_owner(nested_), nested_func(nested_func_owner.get())
+		{}
 
 	String getName() const override
 	{
@@ -161,22 +187,23 @@ public:
 
 	DataTypePtr getReturnType() const override
 	{
-		LOG_TRACE(&Logger::root(), "getreturntype");
 		return std::make_shared<DataTypeArray>(nested_func->getReturnType());
 	}
 
 	void create(AggregateDataPtr place) const override
 	{
-		LOG_TRACE(&Logger::root(), "create");
-		for(UInt64 i = 0; i < array_size; ++i)
-			nested_func->create(place + i * nested_func->sizeOfData());
+		new (place) AggregateFunctionForEachData();
 	}
 
 	void destroy(AggregateDataPtr place) const noexcept override
 	{
-		LOG_TRACE(&Logger::root(), "destroy");
-		for(UInt64 i = 0; i < array_size; ++i)
-			nested_func->destroy(place + i * nested_func->sizeOfData());
+		AggregateFunctionForEachData* data = reinterpret_cast<AggregateFunctionForEachData*>(place);
+		char* begin = data->array_of_aggregate_datas;
+		for(size_t i = 0; i < data->dynamic_array_size; ++i)
+		{
+			nested_func->destroy(begin);
+			begin += nested_func->sizeOfData();
+		}
 	}
 
 	bool hasTrivialDestructor() const override
@@ -186,8 +213,8 @@ public:
 
 	size_t sizeOfData() const override
 	{
-		LOG_TRACE(&Logger::root(), "siuzeofdata");
-		return array_size * nested_func->sizeOfData();
+		//nested_func states will be allocated in the Arena in the add metho.
+		return sizeof(AggregateFunctionForEachData);
 	}
 
 	size_t alignOfData() const override
@@ -198,11 +225,10 @@ public:
 
 	void setArguments(const DataTypes & arguments) override
 	{
-		LOG_TRACE(&Logger::root(), "setarg");
 		size_t num_arguments = arguments.size();
 
 		if (1 != num_arguments)
-			throw Exception("Aggregate functions of the xxxEach group require exactly one argument of array type", ErrorCodes::NUMBER_OF_ARGUMENTS_DOESNT_MATCH);
+			throw Exception("Aggregate functions of the xxxForEach group require exactly one argument of array type", ErrorCodes::NUMBER_OF_ARGUMENTS_DOESNT_MATCH);
 
 		DataTypes nested_argument;
 		if (const DataTypeArray * array = typeid_cast<const DataTypeArray *>(&*arguments[0]))
@@ -215,75 +241,71 @@ public:
 
 	void setParameters(const Array & params) override
 	{
-		LOG_TRACE(&Logger::root(), "setparams");
-		if (1 != params.size())
-			throw Exception("Aggregate functions of the xxxEach group require resulting array size as parameter ", ErrorCodes::PARAMETER_OUT_OF_BOUND);
-
-		if (params[0].getType() != DB::Field::Types::UInt64)
-			throw Exception("Aggregate functions of the xxxEach group require one positive parameter of type int", ErrorCodes::PARAMETER_OUT_OF_BOUND);
-
-		array_size = params[0].get<UInt64>();
-
-		if (0 == array_size)
-			throw Exception("Aggregate functions of the xxxEach group require one positive parameter of type int", ErrorCodes::PARAMETER_OUT_OF_BOUND);
+		if (0 != params.size())
+			throw Exception("Aggregate functions of the xxxForEach group accept zero parameters.", ErrorCodes::PARAMETER_OUT_OF_BOUND);
 	}
 
 	void add(AggregateDataPtr place, const IColumn ** columns, size_t row_num, Arena * arena) const override
 	{
-		//data(place).value.push_back(Array::value_type());
-		//column.get(row_num, data(place).value.back());
-		LOG_TRACE(&Logger::root(), "add row "+std::to_string(row_num) );
-
 		const ColumnArray & first_array_column = static_cast<const ColumnArray &>(*columns[0]);
 		const IColumn::Offsets_t & offsets = first_array_column.getOffsets();
 		const IColumn* array_data = &first_array_column.getData();
-
 		size_t begin = row_num == 0 ? 0 : offsets[row_num - 1];
 		size_t end = offsets[row_num];
 
-		if (end > begin + array_size)
-			end = begin + array_size;
+		size_t array_size = end - begin;
+
+		if (array_size <= 0)
+			return;
+
+		AggregateFunctionForEachData* data = ensureAggregateData(place, array_size, arena);
 
 		for(size_t i = begin; i < end; ++i)
 		{
-			auto z = first_array_column.getDataPtr();
-			Field new_value;
-			z->get(i, new_value);
-
-			LOG_TRACE(&Logger::root(), "add "+std::to_string(i) + " " + std::to_string(size_t(place + (i - begin) * nested_func->sizeOfData())) + " " + std::to_string(new_value.get<Int8>())) ;
-			nested_func->add(place + (i - begin) * nested_func->sizeOfData(), static_cast<const IColumn**>(&array_data), i, arena);
+			char* aggregateData = data->array_of_aggregate_datas + (i - begin) * nested_func->sizeOfData();
+			nested_func->add(aggregateData, static_cast<const IColumn**>(&array_data), i, arena);
 		}
 	}
 
 	void merge(AggregateDataPtr place, ConstAggregateDataPtr rhs, Arena * arena) const override
 	{
-		for(UInt64 i = 0; i < array_size; ++i)
-			nested_func->merge(place + i * nested_func->sizeOfData(), rhs + i * nested_func->sizeOfData(), arena);
+		const AggregateFunctionForEachData* rh_data = reinterpret_cast<const AggregateFunctionForEachData*>(rhs);
+		AggregateFunctionForEachData* data = ensureAggregateData(place, rh_data->dynamic_array_size, arena);
+
+		for(size_t i = 0; i < data->dynamic_array_size; ++i)
+			nested_func->merge(
+					data->array_of_aggregate_datas + i * nested_func->sizeOfData(),
+					rh_data->array_of_aggregate_datas + i * nested_func->sizeOfData(), arena);
 	}
 
 	void serialize(ConstAggregateDataPtr place, WriteBuffer & buf) const override
 	{
-		for(UInt64 i = 0; i < array_size; ++i)
-			nested_func->serialize(place + i * nested_func->sizeOfData(), buf);
+		const AggregateFunctionForEachData* data = reinterpret_cast<const AggregateFunctionForEachData*>(place);
+		buf.write(reinterpret_cast<const char*>(&(data->dynamic_array_size)), sizeof(data->dynamic_array_size));
+		for(size_t i = 0; i < data->dynamic_array_size; ++i)
+			nested_func->serialize(data->array_of_aggregate_datas + i * nested_func->sizeOfData(), buf);
 	}
 
 	void deserialize(AggregateDataPtr place, ReadBuffer & buf, Arena * arena) const override
 	{
-		for(UInt64 i = 0; i < array_size; ++i)
-			nested_func->deserialize(place + i * nested_func->sizeOfData(), buf, arena);
+		AggregateFunctionForEachData* data = reinterpret_cast<AggregateFunctionForEachData*>(place);
+		buf.read(reinterpret_cast<char*>(&data->dynamic_array_size), sizeof(data->dynamic_array_size));
+		for(size_t i = 0; i < data->dynamic_array_size; ++i)
+			nested_func->deserialize(data->array_of_aggregate_datas + i * nested_func->sizeOfData(), buf, arena);
 	}
 
 	void insertResultInto(ConstAggregateDataPtr place, IColumn & to) const override
 	{
 		//Insert results of nested functions into array_size temporary columns
+		const AggregateFunctionForEachData* data = reinterpret_cast<const AggregateFunctionForEachData*>(place);
 		Columns temporaryColumns;
 		size_t temporaryColumnSize = 0;
-		for(UInt64 i = 0; i < array_size; ++i)
+		for(size_t i = 0; i < data->dynamic_array_size; ++i)
 		{
 			ColumnPtr temporaryColumn = nested_func->getReturnType()->createColumn();
 			temporaryColumns.push_back(temporaryColumn);
 
-			nested_func->insertResultInto(place + i * nested_func->sizeOfData(), *temporaryColumn);
+			nested_func->insertResultInto(data->array_of_aggregate_datas + i * nested_func->sizeOfData(), *temporaryColumn);
 
 			if (temporaryColumnSize == 0)
 				temporaryColumnSize = temporaryColumn->size();
@@ -299,15 +321,15 @@ public:
 
 		for(size_t row = 0; row < temporaryColumnSize; ++row)
 		{
-			offsets_to.push_back((offsets_to.size() == 0 ? 0 : offsets_to.back()) + array_size);
-			for(UInt64 i = 0; i < array_size; ++i)
+			offsets_to.push_back((offsets_to.size() == 0 ? 0 : offsets_to.back()) + data->dynamic_array_size);
+			for(size_t i = 0; i < data->dynamic_array_size; ++i)
 				arr_data->insertFrom(*temporaryColumns[i], row);
 		}
 	}
 
 	bool allocatesMemoryInArena() const override
 	{
-		return nested_func->allocatesMemoryInArena();
+		return true;
 	}
 
 	static void addFree(const IAggregateFunction * that, AggregateDataPtr place, const IColumn ** columns, size_t row_num, Arena * arena)
