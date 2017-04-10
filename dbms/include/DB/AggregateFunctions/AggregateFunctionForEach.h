@@ -144,7 +144,7 @@ public:
 		const AggregateFunctionForEachData* rh_data = reinterpret_cast<const AggregateFunctionForEachData*>(rhs);
 		AggregateFunctionForEachData* data = ensureAggregateData(place, rh_data->dynamic_array_size, arena);
 
-		for(size_t i = 0; i < data->dynamic_array_size; ++i)
+		for(size_t i = 0; i < data->dynamic_array_size && i < rh_data->dynamic_array_size; ++i)
 			nested_func->merge(
 					data->array_of_aggregate_datas + i * nested_func->sizeOfData(),
 					rh_data->array_of_aggregate_datas + i * nested_func->sizeOfData(), arena);
@@ -162,6 +162,8 @@ public:
 	{
 		AggregateFunctionForEachData* data = reinterpret_cast<AggregateFunctionForEachData*>(place);
 		buf.read(reinterpret_cast<char*>(&data->dynamic_array_size), sizeof(data->dynamic_array_size));
+		data->array_of_aggregate_datas = nullptr;
+		ensureAggregateData(place, data->dynamic_array_size, arena);
 		for(size_t i = 0; i < data->dynamic_array_size; ++i)
 			nested_func->deserialize(data->array_of_aggregate_datas + i * nested_func->sizeOfData(), buf, arena);
 	}
