@@ -1713,7 +1713,7 @@ void ExpressionAnalyzer::getArrayJoinedColumns()
                 bool found = false;
                 for (const auto & column_name_type : columns)
                 {
-                    String table_name = DataTypeNested::extractNestedTableName(column_name_type.name);
+                    String table_name = DataTypeNested::extractNestedTableName(column_name_type.name, true);
                     String column_name = DataTypeNested::extractNestedColumnName(column_name_type.name);
                     if (table_name == source_name)
                     {
@@ -1740,7 +1740,7 @@ void ExpressionAnalyzer::getArrayJoinedColumnsImpl(ASTPtr ast)
     {
         if (node->kind == ASTIdentifier::Column)
         {
-            String table_name = DataTypeNested::extractNestedTableName(node->name);
+            String table_name = DataTypeNested::extractNestedTableName(node->name, true);
 
             if (array_join_alias_to_name.count(node->name))
             {
@@ -2693,7 +2693,7 @@ void ExpressionAnalyzer::getRequiredColumnsImpl(ASTPtr ast,
     {
         if (node->kind == ASTIdentifier::Column
             && !ignored_names.count(node->name)
-            && !ignored_names.count(DataTypeNested::extractNestedTableName(node->name)))
+            && !ignored_names.count(DataTypeNested::extractNestedTableName(node->name, false)))
         {
             if (!available_joined_columns.count(node->name))
                 required_columns.insert(node->name);

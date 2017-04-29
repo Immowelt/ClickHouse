@@ -261,7 +261,7 @@ Block LogBlockInputStream::readImpl()
         /// For nested structures, remember pointers to columns with offsets
         if (const DataTypeArray * type_arr = typeid_cast<const DataTypeArray *>(observed_type))
         {
-            String name = DataTypeNested::extractNestedTableName(column.name);
+            String name = DataTypeNested::extractNestedTableName(column.name, true);
 
             if (offset_columns.count(name) == 0)
                 offset_columns[name] = std::make_shared<ColumnArray::ColumnOffsets_t>();
@@ -328,7 +328,7 @@ void LogBlockInputStream::addStream(const String & name, const IDataType & type,
     else if (const DataTypeArray * type_arr = typeid_cast<const DataTypeArray *>(&type))
     {
         /// For arrays, separate threads are used for sizes.
-        String size_name = DataTypeNested::extractNestedTableName(name) + ARRAY_SIZES_COLUMN_NAME_SUFFIX + toString(level);
+        String size_name = DataTypeNested::extractNestedTableName(name, true) + ARRAY_SIZES_COLUMN_NAME_SUFFIX + toString(level);
         if (!streams.count(size_name))
             streams.emplace(size_name, std::unique_ptr<Stream>(new Stream(
                 storage.files[size_name].data_file.path(),
@@ -373,7 +373,7 @@ void LogBlockInputStream::readData(const String & name, const IDataType & type, 
         {
             type_arr->deserializeOffsets(
                 column,
-                streams[DataTypeNested::extractNestedTableName(name) + ARRAY_SIZES_COLUMN_NAME_SUFFIX + toString(level)]->compressed,
+                streams[DataTypeNested::extractNestedTableName(name, true) + ARRAY_SIZES_COLUMN_NAME_SUFFIX + toString(level)]->compressed,
                 max_rows_to_read);
         }
 
@@ -459,7 +459,7 @@ void LogBlockOutputStream::addStream(const String & name, const IDataType & type
     else if (const DataTypeArray * type_arr = typeid_cast<const DataTypeArray *>(&type))
     {
         /// For arrays separate threads are used for sizes.
-        String size_name = DataTypeNested::extractNestedTableName(name) + ARRAY_SIZES_COLUMN_NAME_SUFFIX + toString(level);
+        String size_name = DataTypeNested::extractNestedTableName(name, true) + ARRAY_SIZES_COLUMN_NAME_SUFFIX + toString(level);
         if (!streams.count(size_name))
             streams.emplace(size_name, std::unique_ptr<Stream>(new Stream(
                 storage.files[size_name].data_file.path(), storage.max_compress_block_size)));
@@ -501,7 +501,7 @@ void LogBlockOutputStream::writeData(const String & name, const IDataType & type
     else if (const DataTypeArray * type_arr = typeid_cast<const DataTypeArray *>(&type))
     {
         /// For arrays, you first need to serialize the dimensions, and then the values.
-        String size_name = DataTypeNested::extractNestedTableName(name) + ARRAY_SIZES_COLUMN_NAME_SUFFIX + toString(level);
+        String size_name = DataTypeNested::extractNestedTableName(name, true) + ARRAY_SIZES_COLUMN_NAME_SUFFIX + toString(level);
 
         if (offset_columns.count(size_name) == 0)
         {
@@ -649,7 +649,7 @@ void StorageLog::addFile(const String & column_name, const IDataType & type, siz
     else if (const DataTypeArray * type_arr = typeid_cast<const DataTypeArray *>(&type))
     {
         String size_column_suffix = ARRAY_SIZES_COLUMN_NAME_SUFFIX + toString(level);
-        String size_name = DataTypeNested::extractNestedTableName(column_name) + size_column_suffix;
+        String size_name = DataTypeNested::extractNestedTableName(column_name, true) + size_column_suffix;
 
         if (files.end() == files.find(size_name))
         {
@@ -658,7 +658,7 @@ void StorageLog::addFile(const String & column_name, const IDataType & type, siz
             column_data.column_index = column_names.size();
             column_data.data_file = Poco::File{
                 path + escapeForFileName(name) + '/'
-                + escapeForFileName(DataTypeNested::extractNestedTableName(column_name))
+                + escapeForFileName(DataTypeNested::extractNestedTableName(column_name, true))
                 + size_column_suffix + DBMS_STORAGE_LOG_DATA_FILE_EXTENSION};
 
             column_names.push_back(size_name);
@@ -788,7 +788,7 @@ const Marks & StorageLog::getMarksWithRealRowCount() const
       */
 
     if (typeid_cast<const DataTypeArray *>(&column_type))
-        filename = DataTypeNested::extractNestedTableName(column_name) + ARRAY_SIZES_COLUMN_NAME_SUFFIX "0";
+        filename = DataTypeNested::extractNestedTableName(column_name, true) + ARRAY_SIZES_COLUMN_NAME_SUFFIX "0";
     else
         filename = column_name;
 

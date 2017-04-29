@@ -744,7 +744,7 @@ void MergeTreeData::createConvertExpression(const DataPartPtr & part, const Name
     /// in this map, but they won't interfere with the computation.
     std::map<String, size_t> nested_table_counts;
     for (const NameAndTypePair & column : old_columns)
-        ++nested_table_counts[DataTypeNested::extractNestedTableName(column.name)];
+        ++nested_table_counts[DataTypeNested::extractNestedTableName(column.name, false)];
 
     /// For every column that need to be converted: source column name, column name of calculated expression for conversion.
     std::vector<std::pair<String, String>> conversions;
@@ -781,7 +781,7 @@ void MergeTreeData::createConvertExpression(const DataPartPtr & part, const Name
                 /// sizes file.
                 if (typeid_cast<const DataTypeArray *>(observed_type))
                 {
-                    String nested_table = DataTypeNested::extractNestedTableName(column.name);
+                    String nested_table = DataTypeNested::extractNestedTableName(column.name, false);
                     /// If it was the last column referencing these .size0 files, delete them.
                     if (!--nested_table_counts[nested_table])
                     {

@@ -80,9 +80,9 @@ void IMergedBlockOutputStream::addStream(
         if (!skip_offsets)
         {
             /// For arrays, separate threads are used for sizes.
-            String size_name = DataTypeNested::extractNestedTableName(name)
+            String size_name = DataTypeNested::extractNestedTableName(name, true)
                 + ARRAY_SIZES_COLUMN_NAME_SUFFIX + toString(level);
-            String escaped_size_name = escapeForFileName(DataTypeNested::extractNestedTableName(name))
+            String escaped_size_name = escapeForFileName(DataTypeNested::extractNestedTableName(name, true))
                 + ARRAY_SIZES_COLUMN_NAME_SUFFIX + toString(level);
 
             column_streams[size_name] = std::make_unique<ColumnStream>(
@@ -186,7 +186,7 @@ void IMergedBlockOutputStream::writeDataImpl(
     else if (!write_array_data && ((type_arr = typeid_cast<const DataTypeArray *>(&type)) != nullptr))
     {
         /// For arrays, you first need to serialize dimensions, and then values.
-        String size_name = DataTypeNested::extractNestedTableName(name)
+        String size_name = DataTypeNested::extractNestedTableName(name, true)
             + ARRAY_SIZES_COLUMN_NAME_SUFFIX + toString(level);
 
         if (!skip_offsets && offset_columns.count(size_name) == 0)

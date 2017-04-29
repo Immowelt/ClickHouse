@@ -2,6 +2,7 @@
 
 #include <Core/NamesAndTypes.h>
 #include <Storages/ColumnDefault.h>
+#include <DataTypes/DataTypeArray.h>
 
 namespace DB
 {
@@ -39,8 +40,14 @@ struct AlterCommand
     /// the names are the same if they match the whole name or name_without_dot matches the part of the name up to the dot
     static bool namesEqual(const String & name_without_dot, const DB::NameAndTypePair & name_type)
     {
-        String name_with_dot = name_without_dot + ".";
-        return (name_with_dot == name_type.name.substr(0, name_without_dot.length() + 1) || name_without_dot == name_type.name);
+    	if (dynamic_cast<DataTypeArray*>(name_type.type.get()) != nullptr)
+    	{
+            String name_with_dot = name_without_dot + ".";
+            if (name_with_dot == name_type.name.substr(0, name_without_dot.length() + 1))
+            return true;
+    	}
+
+    	return (name_without_dot == name_type.name);
     }
 
     void apply(NamesAndTypesList & columns,

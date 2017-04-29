@@ -27,13 +27,13 @@ std::string DataTypeNested::concatenateNestedName(const std::string & nested_tab
 }
 
 
-std::string DataTypeNested::extractNestedTableName(const std::string & nested_name)
+std::string DataTypeNested::extractNestedTableName(const std::string & nested_name, bool be_strict)
 {
     const char * first_pos = strchr(nested_name.data(), '.');
     const char * last_pos = strrchr(nested_name.data(), '.');
-    if (first_pos != last_pos)
+    if (be_strict && first_pos != last_pos)
         throw Exception("Invalid nested column name: " + nested_name, ErrorCodes::INVALID_NESTED_NAME);
-    return first_pos == nullptr ? nested_name : nested_name.substr(0, first_pos - nested_name.data());
+    return (first_pos == nullptr || (!be_strict && first_pos != last_pos)) ? nested_name : nested_name.substr(0, first_pos - nested_name.data());
 }
 
 

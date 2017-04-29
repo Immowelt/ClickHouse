@@ -30,7 +30,7 @@ public:
 
     static std::string concatenateNestedName(const std::string & nested_table_name, const std::string & nested_field_name);
     /// Returns the prefix of the name to the first '.'. Or the name is unchanged if there is no dot.
-    static std::string extractNestedTableName(const std::string & nested_name);
+    static std::string extractNestedTableName(const std::string & nested_name, bool be_strict);
     /// Returns the name suffix after the first dot on the right '.'. Or the name is unchanged if there is no dot.
     static std::string extractNestedColumnName(const std::string & nested_name);
 

@@ -224,7 +224,7 @@ Block TinyLogBlockInputStream::readImpl()
         /// For nested structures, remember pointers to columns with offsets
         if (const DataTypeArray * type_arr = typeid_cast<const DataTypeArray *>(observed_type))
         {
-            String nested_name = DataTypeNested::extractNestedTableName(column.name);
+            String nested_name = DataTypeNested::extractNestedTableName(column.name, true);
 
             if (offset_columns.count(nested_name) == 0)
                 offset_columns[nested_name] = std::make_shared<ColumnArray::ColumnOffsets_t>();
@@ -278,7 +278,7 @@ void TinyLogBlockInputStream::addStream(const String & name, const IDataType & t
     else if (const DataTypeArray * type_arr = typeid_cast<const DataTypeArray *>(&type))
     {
         /// For arrays separate threads are used for sizes.
-        String size_name = DataTypeNested::extractNestedTableName(name) + ARRAY_SIZES_COLUMN_NAME_SUFFIX + toString(level);
+        String size_name = DataTypeNested::extractNestedTableName(name, true) + ARRAY_SIZES_COLUMN_NAME_SUFFIX + toString(level);
         if (!streams.count(size_name))
             streams.emplace(size_name, std::unique_ptr<Stream>(new Stream(storage.files[size_name].data_file.path(), max_read_buffer_size)));
 
@@ -315,7 +315,7 @@ void TinyLogBlockInputStream::readData(const String & name, const IDataType & ty
         {
             type_arr->deserializeOffsets(
                 column,
-                streams[DataTypeNested::extractNestedTableName(name) + ARRAY_SIZES_COLUMN_NAME_SUFFIX + toString(level)]->compressed,
+                streams[DataTypeNested::extractNestedTableName(name, true) + ARRAY_SIZES_COLUMN_NAME_SUFFIX + toString(level)]->compressed,
                 limit);
         }
 
@@ -351,7 +351,7 @@ void TinyLogBlockOutputStream::addStream(const String & name, const IDataType & 
     else if (const DataTypeArray * type_arr = typeid_cast<const DataTypeArray *>(&type))
     {
         /// For arrays separate threads are used for sizes.
-        String size_name = DataTypeNested::extractNestedTableName(name) + ARRAY_SIZES_COLUMN_NAME_SUFFIX + toString(level);
+        String size_name = DataTypeNested::extractNestedTableName(name, true) + ARRAY_SIZES_COLUMN_NAME_SUFFIX + toString(level);
         if (!streams.count(size_name))
             streams.emplace(size_name, std::unique_ptr<Stream>(new Stream(storage.files[size_name].data_file.path(), storage.max_compress_block_size)));
 
@@ -383,7 +383,7 @@ void TinyLogBlockOutputStream::writeData(const String & name, const IDataType & 
     else if (const DataTypeArray * type_arr = typeid_cast<const DataTypeArray *>(&type))
     {
         /// For arrays, you first need to serialize the dimensions, and then the values.
-        String size_name = DataTypeNested::extractNestedTableName(name) + ARRAY_SIZES_COLUMN_NAME_SUFFIX + toString(level);
+        String size_name = DataTypeNested::extractNestedTableName(name, true) + ARRAY_SIZES_COLUMN_NAME_SUFFIX + toString(level);
 
         if (offset_columns.count(size_name) == 0)
         {
@@ -505,14 +505,14 @@ void StorageTinyLog::addFile(const String & column_name, const IDataType & type,
     else if (const DataTypeArray * type_arr = typeid_cast<const DataTypeArray *>(&type))
     {
         String size_column_suffix = ARRAY_SIZES_COLUMN_NAME_SUFFIX + toString(level);
-        String size_name = DataTypeNested::extractNestedTableName(column_name) + size_column_suffix;
+        String size_name = DataTypeNested::extractNestedTableName(column_name, true) + size_column_suffix;
 
         if (files.end() == files.find(size_name))
         {
             ColumnData column_data;
             files.insert(std::make_pair(size_name, column_data));
             files[size_name].data_file = Poco::File(
-                path + escapeForFileName(name) + '/' + escapeForFileName(DataTypeNested::extractNestedTableName(column_name)) + size_column_suffix + DBMS_STORAGE_LOG_DATA_FILE_EXTENSION);
+                path + escapeForFileName(name) + '/' + escapeForFileName(DataTypeNested::extractNestedTableName(column_name, true)) + size_column_suffix + DBMS_STORAGE_LOG_DATA_FILE_EXTENSION);
         }
 
         addFile(column_name, *type_arr->getNestedType(), level + 1);

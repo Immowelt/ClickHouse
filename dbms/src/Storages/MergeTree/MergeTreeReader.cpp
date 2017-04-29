@@ -118,7 +118,7 @@ void MergeTreeReader::readRange(size_t from_mark, size_t to_mark, Block & res)
             /// For nested data structures collect pointers to offset columns.
             if (const DataTypeArray * type_arr = typeid_cast<const DataTypeArray *>(observed_type))
             {
-                String name = DataTypeNested::extractNestedTableName(column.name);
+                String name = DataTypeNested::extractNestedTableName(column.name, true);
 
                 if (offset_columns.count(name) == 0)
                     offset_columns[name] = append ? nullptr : std::make_shared<ColumnArray::ColumnOffsets_t>();
@@ -375,7 +375,7 @@ void MergeTreeReader::addStream(const String & name, const IDataType & type, con
 
     const DataTypeArray * type_arr = typeid_cast<const DataTypeArray *>(&type);
     bool data_file_exists = Poco::File(path + escaped_column_name + DATA_FILE_EXTENSION).exists();
-    bool is_column_of_nested_type = type_arr && level == 0 && DataTypeNested::extractNestedTableName(name) != name;
+    bool is_column_of_nested_type = type_arr && level == 0 && DataTypeNested::extractNestedTableName(name, false) != name;
 
     /** If data file is missing then we will not try to open it.
       * It is necessary since it allows to add new column to structure of the table without creating new files for old parts.
@@ -403,9 +403,9 @@ void MergeTreeReader::addStream(const String & name, const IDataType & type, con
     /// For arrays separate streams for sizes are used.
     else if (type_arr)
     {
-        String size_name = DataTypeNested::extractNestedTableName(name)
+        String size_name = DataTypeNested::extractNestedTableName(name, true)
             + ARRAY_SIZES_COLUMN_NAME_SUFFIX + toString(level);
-        String escaped_size_name = escapeForFileName(DataTypeNested::extractNestedTableName(name))
+        String escaped_size_name = escapeForFileName(DataTypeNested::extractNestedTableName(name, true))
             + ARRAY_SIZES_COLUMN_NAME_SUFFIX + toString(level);
         String size_path = path + escaped_size_name + DATA_FILE_EXTENSION;
 
@@ -462,7 +462,7 @@ void MergeTreeReader::readData(
         /// For arrays the sizes must be deserialized first, then the values.
         if (read_offsets)
         {
-            Stream & stream = *streams[DataTypeNested::extractNestedTableName(name) + ARRAY_SIZES_COLUMN_NAME_SUFFIX + toString(level)];
+            Stream & stream = *streams[DataTypeNested::extractNestedTableName(name, true) + ARRAY_SIZES_COLUMN_NAME_SUFFIX + toString(level)];
             if (from_mark != cur_mark_idx)
                 stream.seekToMark(from_mark);
             type_arr->deserializeOffsets(
@@ -564,7 +564,7 @@ void MergeTreeReader::fillMissingColumnsImpl(Block & res, const Names & ordered_
 
             if (const ColumnArray * array = typeid_cast<const ColumnArray *>(observed_column))
             {
-                String offsets_name = DataTypeNested::extractNestedTableName(column_name);
+                String offsets_name = DataTypeNested::extractNestedTableName(column_name, true);
                 auto & offsets_column = offset_columns[offsets_name];
 
                 /// If for some reason multiple offsets columns are present for the same nested data structure,
@@ -593,7 +593,7 @@ void MergeTreeReader::fillMissingColumnsImpl(Block & res, const Names & ordered_
                 column_to_add.name = requested_column.name;
                 column_to_add.type = requested_column.type;
 
-                String offsets_name = DataTypeNested::extractNestedTableName(column_to_add.name);
+                String offsets_name = DataTypeNested::extractNestedTableName(column_to_add.name, false);
                 if (offset_columns.count(offsets_name))
                 {
                     ColumnPtr offsets_column = offset_columns[offsets_name];

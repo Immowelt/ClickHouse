@@ -36,7 +36,7 @@ void Block::addDefaults(const NamesAndTypesList & required_columns)
     {
         if (const ColumnArray * array = typeid_cast<const ColumnArray *>(&*elem.column))
         {
-            String offsets_name = DataTypeNested::extractNestedTableName(elem.name);
+            String offsets_name = DataTypeNested::extractNestedTableName(elem.name, true);
             auto & offsets_column = offset_columns[offsets_name];
 
             /// If for some reason there are different displacement columns for one nested structure, then we take nonempty.
@@ -54,7 +54,7 @@ void Block::addDefaults(const NamesAndTypesList & required_columns)
         column_to_add.name = requested_column.name;
         column_to_add.type = requested_column.type;
 
-        String offsets_name = DataTypeNested::extractNestedTableName(column_to_add.name);
+        String offsets_name = DataTypeNested::extractNestedTableName(column_to_add.name, false);
         if (offset_columns.count(offsets_name))
         {
             ColumnPtr offsets_column = offset_columns[offsets_name];
@@ -406,7 +406,7 @@ void Block::checkNestedArraysOffsets() const
 
         if (const ColumnArray * column_array = typeid_cast<const ColumnArray *>(observed_col))
         {
-            String name = DataTypeNested::extractNestedTableName(elem.name);
+            String name = DataTypeNested::extractNestedTableName(elem.name, true);
 
             ArrayColumns::const_iterator it = array_columns.find(name);
             if (array_columns.end() == it)
@@ -440,7 +440,7 @@ void Block::optimizeNestedArraysOffsets()
 
         if (ColumnArray * column_array = typeid_cast<ColumnArray *>(observed_col))
         {
-            String name = DataTypeNested::extractNestedTableName(elem.name);
+            String name = DataTypeNested::extractNestedTableName(elem.name, true);
 
             ArrayColumns::const_iterator it = array_columns.find(name);
             if (array_columns.end() == it)
