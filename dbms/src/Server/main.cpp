@@ -17,6 +17,7 @@ int mainEntryClickHouseBenchmark(int argc, char ** argv);
 int mainEntryClickHousePerformanceTest(int argc, char ** argv);
 int mainEntryClickHouseExtractFromConfig(int argc, char ** argv);
 int mainEntryClickHouseCompressor(int argc, char ** argv);
+int mainEntryClickHouseGDPR(int argc, char ** argv);
 int mainEntryClickHouseFormat(int argc, char ** argv);
 
 #if USE_EMBEDDED_COMPILER
@@ -41,6 +42,7 @@ std::pair<const char *, MainFunc> clickhouse_applications[] =
     {"extract-from-config", mainEntryClickHouseExtractFromConfig},
     {"compressor", mainEntryClickHouseCompressor},
     {"format", mainEntryClickHouseFormat},
+    {"gdpr", mainEntryClickHouseGDPR},
 #if USE_EMBEDDED_COMPILER
     {"clang", mainEntryClickHouseClang},
     {"lld", mainEntryClickHouseLLD},

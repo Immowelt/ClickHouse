@@ -22,6 +22,9 @@ target_include_directories (clickhouse-server PUBLIC ${ClickHouse_SOURCE_DIR}/li
 add_library(clickhouse-local LocalServer.cpp)
 target_link_libraries(clickhouse-local dbms clickhouse-server clickhouse_functions clickhouse_aggregate_functions clickhouse_table_functions)
 
+add_library(clickhouse-gdpr GDPR.cpp)
+target_link_libraries(clickhouse-gdpr dbms clickhouse-server clickhouse_functions clickhouse_aggregate_functions clickhouse_table_functions)
+
 add_library(clickhouse-extract-from-config ExtractFromConfig.cpp)
 target_link_libraries(clickhouse-extract-from-config dbms ${Boost_PROGRAM_OPTIONS_LIBRARY})
 
@@ -53,6 +56,7 @@ target_link_libraries(clickhouse
     clickhouse-server
     clickhouse-client
     clickhouse-local
+    clickhouse-gdpr
     clickhouse-benchmark
     clickhouse-performance-test
     clickhouse-extract-from-config
@@ -74,6 +78,7 @@ endmacro(install_symlink_to_clickhouse)
 install_symlink_to_clickhouse(clickhouse-server)
 install_symlink_to_clickhouse(clickhouse-client)
 install_symlink_to_clickhouse(clickhouse-local)
+install_symlink_to_clickhouse(clickhouse-gdpr)
 install_symlink_to_clickhouse(clickhouse-benchmark)
 install_symlink_to_clickhouse(clickhouse-performance-test)
 install_symlink_to_clickhouse(clickhouse-format)
