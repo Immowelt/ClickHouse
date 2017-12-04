@@ -79,6 +79,8 @@ public:
       */
     void profileFeedback(const ReadBufferFromFileBase::ProfileInfo info);
 
+    std::vector<MergeTreeData::DataPartPtr> getDataParts();
+
 private:
     std::vector<size_t> fillPerPartInfo(
         RangesInDataParts & parts, const ExpressionActionsPtr & prewhere_actions, const String & prewhere_column_name,

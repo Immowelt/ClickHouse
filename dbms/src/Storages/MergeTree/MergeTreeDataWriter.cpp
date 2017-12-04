@@ -164,6 +164,8 @@ MergeTreeData::MutableDataPartPtr MergeTreeDataWriter::writeTempPart(BlockWithPa
     String full_path = new_data_part->getFullPath();
     Poco::File dir(full_path);
 
+    LOG_WARNING(log, "to " + full_path);
+
     if (dir.exists())
     {
         LOG_WARNING(log, "Removing old temporary directory " + full_path);
@@ -199,12 +201,15 @@ MergeTreeData::MutableDataPartPtr MergeTreeDataWriter::writeTempPart(BlockWithPa
     auto compression_settings = data.context.chooseCompressionSettings(0, 0);
 
     NamesAndTypesList columns = data.getColumnsList().filter(block.getColumnsList().getNames());
+
+    LOG_WARNING(log, "before out to " + new_data_part->getFullPath());
     MergedBlockOutputStream out(data, new_data_part->getFullPath(), columns, compression_settings);
 
     out.writePrefix();
     out.writeWithPermutation(block, perm_ptr);
     out.writeSuffixAndFinalizePart(new_data_part);
 
+    LOG_WARNING(log, "finalized");
     ProfileEvents::increment(ProfileEvents::MergeTreeDataWriterRows, block.rows());
     ProfileEvents::increment(ProfileEvents::MergeTreeDataWriterUncompressedBytes, block.bytes());
     ProfileEvents::increment(ProfileEvents::MergeTreeDataWriterCompressedBytes, new_data_part->size_in_bytes);

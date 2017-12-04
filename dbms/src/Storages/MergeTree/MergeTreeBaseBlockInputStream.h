@@ -30,6 +30,8 @@ public:
 
     ~MergeTreeBaseBlockInputStream() override;
 
+    virtual std::vector<MergeTreeData::DataPartPtr> getDataParts() = 0;
+
 protected:
 
     Block readImpl() override final;

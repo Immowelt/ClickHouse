@@ -62,6 +62,13 @@ MergeTreeBlockInputStream::MergeTreeBlockInputStream(
     setTotalRowsApprox(total_rows);
 }
 
+std::vector<MergeTreeData::DataPartPtr> MergeTreeBlockInputStream::getDataParts()
+{
+    std::vector<MergeTreeData::DataPartPtr> res;
+    res.push_back(data_part);
+    return res;
+}
+
 String MergeTreeBlockInputStream::getID() const
 {
     std::stringstream res;

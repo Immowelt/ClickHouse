@@ -117,6 +117,16 @@ MergeTreeReadTaskPtr MergeTreeReadPool::getTask(const size_t min_marks_to_read, 
 }
 
 
+std::vector<MergeTreeData::DataPartPtr> MergeTreeReadPool::getDataParts()
+{
+    std::vector<MergeTreeData::DataPartPtr> res;
+    for(auto p : parts)
+    {
+        res.push_back(p.data_part);
+    }
+    return res;
+}
+
 void MergeTreeReadPool::profileFeedback(const ReadBufferFromFileBase::ProfileInfo info)
 {
     if (backoff_settings.min_read_latency_ms == 0 || do_not_steal_tasks)

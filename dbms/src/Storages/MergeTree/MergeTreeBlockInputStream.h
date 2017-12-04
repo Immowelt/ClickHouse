@@ -40,6 +40,8 @@ public:
 
     String getID() const override;
 
+    std::vector<MergeTreeData::DataPartPtr> getDataParts() override;
+
     /// Closes readers and unlock part locks
     void finish();
 
