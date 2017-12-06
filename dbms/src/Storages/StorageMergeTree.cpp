@@ -59,6 +59,7 @@ StorageMergeTree::StorageMergeTree(
     reader(data), writer(data), merger(data, context.getBackgroundPool()),
     log(&Logger::get(database_name_ + "." + table_name + " (StorageMergeTree)"))
 {
+        std::cout << "CTOR " << full_path << "\n";
     data.loadDataParts(has_force_restore_data_flag);
 
     if (!attach)

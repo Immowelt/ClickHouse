@@ -107,6 +107,8 @@ void DatabaseOrdinary::loadTables(
     using FileNames = std::vector<std::string>;
     FileNames file_names;
 
+    std::cout << "DO_path " << path << "\n";
+
     Poco::DirectoryIterator dir_end;
     for (Poco::DirectoryIterator dir_it(path); dir_it != dir_end; ++dir_it)
     {
@@ -143,7 +145,10 @@ void DatabaseOrdinary::loadTables(
     size_t total_tables = file_names.size();
     LOG_INFO(log, "Total " << total_tables << " tables.");
 
-    String data_path = context.getPath() + "/data/" + escapeForFileName(name) + "/";
+
+    String data_path = context.getPath() + "data/" + escapeForFileName(name) + "/";
+
+    std::cout << "DOdata_path " << data_path << "\n";
 
     StopwatchWithLock watch;
     std::atomic<size_t> tables_processed {0};

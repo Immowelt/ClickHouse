@@ -451,7 +451,6 @@ void MergedBlockOutputStream::writeSuffixAndFinalizePart(
 
 void MergedBlockOutputStream::init()
 {
-    std::cout << "MBOS: " << part_path << "\n";
     Poco::File(part_path).createDirectories();
 
     if (storage.merging_params.mode != MergeTreeData::MergingParams::Unsorted)

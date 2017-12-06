@@ -108,6 +108,8 @@ MergeTreeData::MergeTreeData(
     broken_part_callback(broken_part_callback_),
     log_name(log_name_), log(&Logger::get(log_name + " (Data)"))
 {
+        std::cout << "ctor " << full_path_ << "\n";
+
     merging_params.check(*columns);
 
     if (primary_expr_ast && merging_params.mode == MergingParams::Unsorted)
@@ -403,6 +405,7 @@ void MergeTreeData::loadDataParts(bool skip_sanity_checks)
         if (startsWith(it.name(), "tmp"))
             continue;
 
+        std::cout << full_path << "   " << it.name() << "   &&&\n";
         part_file_names.push_back(it.name());
     }
 

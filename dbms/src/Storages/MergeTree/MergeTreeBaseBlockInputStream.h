@@ -31,6 +31,7 @@ public:
     ~MergeTreeBaseBlockInputStream() override;
 
     virtual std::vector<MergeTreeData::DataPartPtr> getDataParts() = 0;
+    void resetPrewhereActions() {prewhere_actions = nullptr;};
 
 protected:
 
