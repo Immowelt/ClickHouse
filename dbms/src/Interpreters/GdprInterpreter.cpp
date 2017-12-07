@@ -11,6 +11,7 @@
 #include <Parsers/IAST.h>
 #include <Storages/MergeTree/MergeTreeThreadBlockInputStream.h>
 #include <Storages/MergeTree/MergeTreeDataWriter.h>
+#include <Storages/MergeTree/MergeTreeBlockOutputStream.h>
 #include <Storages/StorageMergeTree.h>
 
 #include <Poco/File.h>
@@ -41,7 +42,7 @@ GdprInterpreter::~GdprInterpreter()
 
 void fillStreams(BlockInputStreamPtr parent, MergeTreeStreams & streams)
 {
-    MergeTreeBaseBlockInputStream* p = dynamic_cast<MergeTreeBaseBlockInputStream*>(parent);
+    MergeTreeBaseBlockInputStream* p = dynamic_cast<MergeTreeBaseBlockInputStream*>(parent.get());
 
     if (p)
     {
@@ -52,7 +53,7 @@ void fillStreams(BlockInputStreamPtr parent, MergeTreeStreams & streams)
         streams.push_back(p);
     }
 
-    for(auto child: parent->children)
+    for(auto child: parent->getChildren())
     {
         fillStreams(child, streams);
     }
@@ -73,9 +74,6 @@ BlockIO GdprInterpreter::execute()
 
     //writing
     auto storage = context.getTable(context.getCurrentDatabase(), table);
-    auto merge_tree = dynamic_cast<StorageMergeTree *>(&*storage);
-    MergeTreeData & data = merge_tree->getData();
-    MergeTreeDataWriter writer(data);
 
     MergeTreeStreams streams;
     fillStreams(block.in, streams);
@@ -86,25 +84,36 @@ BlockIO GdprInterpreter::execute()
         size_t pos = b.getPositionByName(column);
         ColumnWithTypeAndName & oldcolumn = b.getByPosition(pos);
         ColumnWithTypeAndName newcolumn = oldcolumn.cloneEmpty();
-        ColumnString * col = dynamic_cast<ColumnString *>(oldcolumn.column);
+        ColumnString * col = dynamic_cast<ColumnString *>(oldcolumn.column.get());
         for(size_t row = 0; row < b.rows(); ++row)
         {
             if(!strcasecmp(col->getDataAtWithTerminatingZero(row).data, oldvalue.c_str()))
             {
+                std::cout << col->getDataAtWithTerminatingZero(row).data << " vs " << oldvalue.c_str() << " - replacing\n";
                 newcolumn.column->insertDataWithTerminatingZero(newvalue.c_str(), row);
             }
             else
             {
+                std::cout << col->getDataAtWithTerminatingZero(row).data << " vs " << oldvalue.c_str() << " - leaving\n";
                 newcolumn.column->insertDataWithTerminatingZero(col->getDataAtWithTerminatingZero(row).data, row);
             }
         }
 
-        auto part_blocks = writer.splitBlockIntoParts(b);
-        for (auto & current_block : part_blocks)
-        {
-            MergeTreeData::MutableDataPartPtr part = writer.writeTempPart(current_block);
-            std::cout << part->getFullPath() <<  " has been written\n";
-        }
+        b.erase(pos);
+        b.insert(pos, newcolumn);
+
+        auto merge_tree = dynamic_cast<StorageMergeTree *>(storage.get());
+        MergeTreeBlockOutputStream outstream(*merge_tree);
+        outstream.write(b);
+
+        //    MergeTreeData & data = merge_tree->getData();
+        //    MergeTreeDataWriter writer(data);
+//        auto part_blocks = writer.splitBlockIntoParts(b);
+//        for (auto & current_block : part_blocks)
+//        {
+            //MergeTreeData::MutableDataPartPtr part = writer.writeTempPart(current_block);
+//            std::cout << part->getFullPath() <<  " has been written\n";
+//        }
     }
 
     return {};
