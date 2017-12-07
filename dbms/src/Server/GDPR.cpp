@@ -71,11 +71,11 @@ void GDPR::defineOptions(Poco::Util::OptionSet& _options)
             .binding("table"));
 
     _options.addOption(
-        Poco::Util::Option("where", "W", "Which records to update")
+        Poco::Util::Option("prewhere", "W", "Which records to update")
             .required(true)
             .repeatable(false)
-            .argument("<where clause>")
-            .binding("where"));
+            .argument("<prewhere clause>")
+            .binding("prewhere"));
 
     _options.addOption(
         Poco::Util::Option("column", "C", "Which column to update")
@@ -85,11 +85,18 @@ void GDPR::defineOptions(Poco::Util::OptionSet& _options)
             .binding("column"));
 
     _options.addOption(
-        Poco::Util::Option("value", "V", "New value to set")
+        Poco::Util::Option("oldvalue", "V", "Old value to change")
+            .required(true)
+            .repeatable(false)
+            .argument("<old column value>")
+            .binding("oldvalue"));
+
+    _options.addOption(
+        Poco::Util::Option("newvalue", "V", "New value to set")
             .required(true)
             .repeatable(false)
             .argument("<new column value>")
-            .binding("value"));
+            .binding("newvalue"));
 
 
     _options.addOption(
@@ -144,7 +151,7 @@ void GDPR::displayHelp()
 {
     Poco::Util::HelpFormatter helpFormatter(options());
     helpFormatter.setCommand(commandName());
-    helpFormatter.setUsage("--table=<table name> --where=<where clause> --column=<column name> --value=<new column value>");
+    helpFormatter.setUsage("--table=<table name> --prewhere=<prewhere clause> --column=<column name> --oldvalue=<old column value> --newvalue=<new column value>");
     helpFormatter.setHeader("\n"
         "clickhouse-gdpr updates values of some column with a new value.\n"
         "It is intended to be used to satisfy the EU GDPR law requiring\n"
@@ -206,9 +213,10 @@ try
 
     interpreter = std::make_unique<GdprInterpreter>(
             config().getString("table"),
-            config().getString("where"),
+            config().getString("prewhere"),
             config().getString("column"),
-            config().getString("value"),
+            config().getString("oldvalue"),
+            config().getString("newvalue"),
             *context);
 
 
@@ -304,7 +312,7 @@ void GDPR::updateData()
 {
     Logger * log = &logger();
 
-    LOG_INFO(log, "Updating " << interpreter->table << "." << interpreter->column << " where " << interpreter->where << " with " << interpreter->value);
+    LOG_INFO(log, "Updating " << interpreter->table << "." << interpreter->column << " where " << interpreter->prewhere << " old " << interpreter->oldvalue << " with " << interpreter->newvalue);
 
     interpreter->execute();
 

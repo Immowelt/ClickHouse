@@ -1,5 +1,7 @@
 #include "GdprInterpreter.h"
 
+#include <strings.h>
+
 #include <Interpreters/ExpressionAnalyzer.h>
 #include <Interpreters/ExpressionActions.h>
 #include <Interpreters/InterpreterSelectQuery.h>
@@ -18,14 +20,16 @@ namespace DB
 
 GdprInterpreter::GdprInterpreter(
         String table_,
-        String where_,
+        String prewhere_,
         String column_,
-        String value_,
+        String oldvalue_,
+        String newvalue_,
         Context & context_):
                 table(table_),
-                where(where_),
+                prewhere(prewhere_),
                 column(column_),
-                value(value_),
+                oldvalue(oldvalue_),
+                newvalue(newvalue_),
                 context(context_)
 {
 }
@@ -35,51 +39,37 @@ GdprInterpreter::~GdprInterpreter()
 }
 
 
-void pr(BlockInputStreamPtr p, String t, int k)
+void fillStreams(BlockInputStreamPtr parent, MergeTreeStreams & streams)
 {
-    std::cout << t << p->getID() << "\n";
-    MergeTreeBaseBlockInputStream* ptr = dynamic_cast<MergeTreeBaseBlockInputStream*>(p.get());
+    MergeTreeBaseBlockInputStream* p = dynamic_cast<MergeTreeBaseBlockInputStream*>(parent);
 
-    if (ptr)
+    if (p)
     {
-        for(auto dpart : ptr->getDataParts())
-        {
-            std::cout << t << "..." << dpart->getFullPath() << "\t";
-            if (k == 1)
-            {
-                Block b = ptr->read();
-                std::cout << b.dumpNames() << "\t" << b.rows() << "x" << b.columns();
-
-            }
-            std::cout << "\n";
-        }
+//        for(auto part : p->getDataParts())
+//        {
+//            part->getFullPath()
+//        }
+        streams.push_back(p);
     }
 
-    std::cout << "\n";
-
-    int i = 0;
-    for(const auto & child : p->getChildren())
+    for(auto child: parent->children)
     {
-        pr(child, t + "\t", i++);
+        fillStreams(child, streams);
     }
 }
 
 BlockIO GdprInterpreter::execute()
 {
-    Poco::File("/var/lib/clickhouse//data/default/daten/tmp_insert_20180617_20180617_3_3_0/manu/").createDirectories();
-
-    String dummy_select = "select * from " + table + " where " + where;
+    String dummy_select = "select * from " + table; // + " prewhere " + prewhere;
 
     ParserQuery parser(dummy_select.data());
     ASTPtr ast = parseQuery(parser, dummy_select.data(), dummy_select.data() + dummy_select.size(), "GDPR dummy select query");
 
     //ast->dumpTree(std::cout);
 
-    auto isq = InterpreterSelectQuery(ast, context, QueryProcessingStage::FetchColumns);
+    auto isq = InterpreterSelectQuery(ast, context, QueryProcessingStage::Complete);
     auto block = isq.execute();
     block.in->dumpTree(std::cout);
-
-    //pr(block.in, "", 0);
 
     //writing
     auto storage = context.getTable(context.getCurrentDatabase(), table);
@@ -87,22 +77,33 @@ BlockIO GdprInterpreter::execute()
     MergeTreeData & data = merge_tree->getData();
     MergeTreeDataWriter writer(data);
 
-    for(const auto & child : block.in->getChildren())
-    {
-        MergeTreeBaseBlockInputStream* ptr = dynamic_cast<MergeTreeBaseBlockInputStream*>(child.get());
-        Block b = ptr->read();
-        if (b.rows() > 0)
-        {
-            for(auto & bwp : writer.splitBlockIntoParts(b))
-            {
-                auto newpart = writer.writeTempPart(bwp);
-                String s = newpart->getFullPath() + "manu/";
-                std::cout << ":::" << s << ":::\n" ;
-                //Poco::File(s).createDirectories();
-                Poco::File("/var/lib/clickhouse//data/default/daten/tmp_insert_20180617_20180617_3_3_0/manu/").createDirectories();
-                std::cout << ">>> " << newpart->getFullPath() << "\n";
-            }
+    MergeTreeStreams streams;
+    fillStreams(block.in, streams);
 
+    for(auto stream : streams)
+    {
+        Block b = stream->read();
+        size_t pos = b.getPositionByName(column);
+        ColumnWithTypeAndName & oldcolumn = b.getByPosition(pos);
+        ColumnWithTypeAndName newcolumn = oldcolumn.cloneEmpty();
+        ColumnString * col = dynamic_cast<ColumnString *>(oldcolumn.column);
+        for(size_t row = 0; row < b.rows(); ++row)
+        {
+            if(!strcasecmp(col->getDataAtWithTerminatingZero(row).data, oldvalue.c_str()))
+            {
+                newcolumn.column->insertDataWithTerminatingZero(newvalue.c_str(), row);
+            }
+            else
+            {
+                newcolumn.column->insertDataWithTerminatingZero(col->getDataAtWithTerminatingZero(row).data, row);
+            }
+        }
+
+        auto part_blocks = writer.splitBlockIntoParts(b);
+        for (auto & current_block : part_blocks)
+        {
+            MergeTreeData::MutableDataPartPtr part = writer.writeTempPart(current_block);
+            std::cout << part->getFullPath() <<  " has been written\n";
         }
     }
 
