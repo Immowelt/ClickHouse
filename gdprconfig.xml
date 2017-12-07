@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<yandex>
+    <logger>
+        <level>trace</level>
+        <log>/var/log/clickhouse-server/clickhouse-server.log</log>
+        <errorlog>/var/log/clickhouse-server/clickhouse-server.err.log</errorlog>
+        <size>1000M</size>
+        <count>10</count>
+    </logger>
+
+    <path>/var/lib/clickhouse/</path>
+    <tmp_path>/var/lib/clickhouse/tmp/</tmp_path>
+    <users_config>gdprusers.xml</users_config> 
+    <default_profile>default</default_profile>
+    <default_database>default</default_database>
+
+</yandex>
