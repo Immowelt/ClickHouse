@@ -110,8 +110,15 @@ try
     {
         pre_column_names = prewhere_actions->getRequiredColumns();
 
+
         if (pre_column_names.empty())
             pre_column_names.push_back(column_names[0]);
+
+        for (auto z : pre_column_names)
+        {
+            std::cout << "[{]" << z << "]}]";
+        }
+
 
         const auto injected_pre_columns = injectRequiredColumns(storage, data_part, pre_column_names);
         if (!injected_pre_columns.empty())
@@ -120,7 +127,9 @@ try
         const NameSet pre_name_set(pre_column_names.begin(), pre_column_names.end());
         /// If the expression in PREWHERE is not a column of the table, you do not need to output a column with it
         ///  (from storage expect to receive only the columns of the table).
+
         remove_prewhere_column = !pre_name_set.count(prewhere_column);
+        std::cout << "§§§" << prewhere_column << " " << remove_prewhere_column << "\n";
 
         Names post_column_names;
         for (const auto & name : column_names)
