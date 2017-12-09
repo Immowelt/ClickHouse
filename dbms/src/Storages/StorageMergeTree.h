@@ -80,6 +80,8 @@ public:
     MergeTreeData & getData() { return data; }
     const MergeTreeData & getData() const { return data; }
 
+    SimpleIncrement* getIncrementPtr() {return &increment;}
+
 private:
     String path;
     String database_name;
