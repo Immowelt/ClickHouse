@@ -8,6 +8,10 @@
         <count>10</count>
     </logger>
 
+    <mark_cache_size>5368709120</mark_cache_size>
+    <tcp_port>9000</tcp_port>
+    <http_port>8123</http_port>
+
     <path>/var/lib/clickhouse/</path>
     <tmp_path>/var/lib/clickhouse/tmp/</tmp_path>
     <users_config>gdprusers.xml</users_config> 

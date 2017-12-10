@@ -54,7 +54,7 @@ void fillStreams(BlockInputStreamPtr parent, MergeTreeStreams & streams, MergeTr
             {
                 parts[s] = part;
                 streams.push_back(std::move(std::make_shared<MergeTreeBlockInputStream>(
-                          part->storage, part, DEFAULT_MERGE_BLOCK_SIZE, 0, 0, part->storage.getColumnNamesList(), MarkRanges(1, MarkRange(0, part->marks_count)),
+                          part->storage, part, 10000000, 0, 0, part->storage.getColumnNamesList(), MarkRanges(1, MarkRange(0, part->marks_count)),
                           false, nullptr, "", true, 0, DBMS_DEFAULT_BUFFER_SIZE, false)));
             }
         }
@@ -73,7 +73,7 @@ BlockIO GdprInterpreter::execute()
 
     std::cout << "Gathering all affected parts\n";
 
-    String dummy_select = "select * from " + table; // + " prewhere " + prewhere;
+    String dummy_select = "select * from " + table + " prewhere " + prewhere;
 
     ParserQuery parser(dummy_select.data());
     ASTPtr ast = parseQuery(parser, dummy_select.data(), dummy_select.data() + dummy_select.size(), "GDPR dummy select query");
@@ -91,6 +91,10 @@ BlockIO GdprInterpreter::execute()
         {
             std::cout << "* ";
         }
+        else
+        {
+            std::cout << "  ";
+        }
         std::cout << pp->getFullPath() << "\n";
     }
 
@@ -101,40 +105,58 @@ BlockIO GdprInterpreter::execute()
     {
         auto mypart = stream->getDataParts()[0];
         std::cout << "Scanning " << mypart->getFullPath() << "\n";
-        Block b = stream->read();
-        size_t pos = b.getPositionByName(column);
-        ColumnWithTypeAndName & oldcolumn = b.getByPosition(pos);
-        ColumnWithTypeAndName newcolumn = oldcolumn.cloneEmpty();
-        ColumnString * col = dynamic_cast<ColumnString *>(oldcolumn.column.get());
-        const char* newval = newvalue.c_str();
-        size_t newvallen = strlen(newval) + 1;
-        size_t found = 0;
-        for(size_t row = 0; row < b.rows(); ++row)
+        std::vector<Block> blocks;
+        while(true)
         {
-            StringRef s = col->getDataAtWithTerminatingZero(row);
-            if(!strcasecmp(s.data, oldvalue.c_str()))
-            {
-                std::cout << s.data << " vs " << oldvalue.c_str() << " - replacing\n";
-                newcolumn.column->insertDataWithTerminatingZero(newval, newvallen);
-                ++replaced;
-                ++found;
-            }
-            else
-            {
-                std::cout << s.data << " vs " << oldvalue.c_str() << " - leaving\n";
-                newcolumn.column->insertFrom(*col, row);
-            }
+            Block b = stream->read();
+            if (b.rows() == 0)
+                break;
+
+            blocks.push_back(std::move(b));
         }
 
-        b.erase(pos);
-        b.insert(pos, newcolumn);
+        size_t found = 0;
+        for(auto & b : blocks)
+        {
+            size_t pos = b.getPositionByName(column);
+            ColumnWithTypeAndName & oldcolumn = b.getByPosition(pos);
+            ColumnWithTypeAndName newcolumn = oldcolumn.cloneEmpty();
+            ColumnString * col = dynamic_cast<ColumnString *>(oldcolumn.column.get());
+            const char* newval = newvalue.c_str();
+            size_t newvallen = strlen(newval) + 1;
+            for(size_t row = 0; row < b.rows(); ++row)
+            {
+                StringRef s = col->getDataAtWithTerminatingZero(row);
+                if(!strcasecmp(s.data, oldvalue.c_str()))
+                {
+                    std::cout << s.data << " vs " << oldvalue.c_str() << " - replacing\n";
+                    newcolumn.column->insertDataWithTerminatingZero(newval, newvallen);
+                    ++replaced;
+                    ++found;
+                }
+                else
+                {
+                    //std::cout << s.data << " vs " << oldvalue.c_str() << " - leaving\n";
+                    newcolumn.column->insertFrom(*col, row);
+                }
+            }
+
+            if (found > 0)
+            {
+                b.erase(pos);
+                b.insert(pos, newcolumn);
+            }
+        }
 
         if (found > 0)
         {
             std::cout << found << " occurences found\n";
             merge_tree->getData().renameAndDetachPart(mypart, "", false, true);
             std::cout << "Storing new part.\n";
-            outstream.write(b);
+            for(auto & b : blocks)
+            {
+                outstream.write(b);
+            }
         }
     }
 
