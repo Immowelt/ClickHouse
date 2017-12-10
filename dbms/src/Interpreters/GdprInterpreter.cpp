@@ -9,6 +9,7 @@
 #include <Parsers/ParserQuery.h>
 #include <Parsers/parseQuery.h>
 #include <Parsers/IAST.h>
+#include <Storages/MergeTree/MergeTreeBlockInputStream.h>
 #include <Storages/MergeTree/MergeTreeThreadBlockInputStream.h>
 #include <Storages/MergeTree/MergeTreeDataWriter.h>
 #include <Storages/MergeTree/MergeTreeBlockOutputStream.h>
@@ -40,116 +41,104 @@ GdprInterpreter::~GdprInterpreter()
 }
 
 
-void fillStreams(BlockInputStreamPtr parent, MergeTreeStreams & streams)
+void fillStreams(BlockInputStreamPtr parent, MergeTreeStreams & streams, MergeTreeStreamPartMap & parts)
 {
     MergeTreeBaseBlockInputStream* p = dynamic_cast<MergeTreeBaseBlockInputStream*>(parent.get());
 
     if (p)
     {
-//        for(auto part : p->getDataParts())
-//        {
-//            part->getFullPath()
-//        }
-        streams.push_back(p);
+        for(auto part : p->getDataParts())
+        {
+            String s = part->getFullPath();
+            if (parts.count(s) == 0)
+            {
+                parts[s] = part;
+                streams.push_back(std::move(std::make_shared<MergeTreeBlockInputStream>(
+                          part->storage, part, DEFAULT_MERGE_BLOCK_SIZE, 0, 0, part->storage.getColumnNamesList(), MarkRanges(1, MarkRange(0, part->marks_count)),
+                          false, nullptr, "", true, 0, DBMS_DEFAULT_BUFFER_SIZE, false)));
+            }
+        }
     }
 
     for(auto child: parent->getChildren())
     {
-        fillStreams(child, streams);
+        fillStreams(child, streams, parts);
     }
 }
 
 BlockIO GdprInterpreter::execute()
 {
+    auto storage = context.getTable(context.getCurrentDatabase(), table);
+    auto merge_tree = dynamic_cast<StorageMergeTree *>(storage.get());
+
+    std::cout << "Gathering all affected parts\n";
+
     String dummy_select = "select * from " + table; // + " prewhere " + prewhere;
 
     ParserQuery parser(dummy_select.data());
     ASTPtr ast = parseQuery(parser, dummy_select.data(), dummy_select.data() + dummy_select.size(), "GDPR dummy select query");
 
-    //ast->dumpTree(std::cout);
-
     auto isq = InterpreterSelectQuery(ast, context, QueryProcessingStage::Complete);
     auto block = isq.execute();
-    block.in->dumpTree(std::cout);
-
-    //writing
-    auto storage = context.getTable(context.getCurrentDatabase(), table);
 
     MergeTreeStreams streams;
-    fillStreams(block.in, streams);
+    MergeTreeStreamPartMap parts;
+    fillStreams(block.in, streams, parts);
 
+    for (auto pp: merge_tree->getData().getDataParts())
+    {
+        if (parts.count(pp->getFullPath()) == 1)
+        {
+            std::cout << "* ";
+        }
+        std::cout << pp->getFullPath() << "\n";
+    }
+
+    std::cout << "Searching for occurences\n";
+    size_t replaced = 0;
+    MergeTreeBlockOutputStream outstream(*merge_tree);
     for(auto stream : streams)
     {
-        std::cout << "1. " << stream->getID() << "\n";
-        std::cout.flush();
+        auto mypart = stream->getDataParts()[0];
+        std::cout << "Scanning " << mypart->getFullPath() << "\n";
         Block b = stream->read();
-        std::cout << "2. " << stream->getID() << "\n";
-        std::cout.flush();
         size_t pos = b.getPositionByName(column);
-        std::cout << "3. " << pos << "\n";
-        std::cout.flush();
         ColumnWithTypeAndName & oldcolumn = b.getByPosition(pos);
         ColumnWithTypeAndName newcolumn = oldcolumn.cloneEmpty();
         ColumnString * col = dynamic_cast<ColumnString *>(oldcolumn.column.get());
-        std::cout << "4. " << (col == nullptr ? "null": "notnull") << "\n";
-        std::cout.flush();
         const char* newval = newvalue.c_str();
-        size_t newvallen = strlen(newval);
+        size_t newvallen = strlen(newval) + 1;
+        size_t found = 0;
         for(size_t row = 0; row < b.rows(); ++row)
         {
-            std::cout << "5. \n";
-            std::cout.flush();
             StringRef s = col->getDataAtWithTerminatingZero(row);
             if(!strcasecmp(s.data, oldvalue.c_str()))
             {
                 std::cout << s.data << " vs " << oldvalue.c_str() << " - replacing\n";
-                std::cout.flush();
                 newcolumn.column->insertDataWithTerminatingZero(newval, newvallen);
+                ++replaced;
+                ++found;
             }
             else
             {
                 std::cout << s.data << " vs " << oldvalue.c_str() << " - leaving\n";
-                std::cout.flush();
                 newcolumn.column->insertFrom(*col, row);
             }
         }
 
-        std::cout << "6. \n";
         b.erase(pos);
-        std::cout << "7. \n";
-
         b.insert(pos, newcolumn);
 
-        auto merge_tree = dynamic_cast<StorageMergeTree *>(storage.get());
-        std::cout << "8. \n";
-
-//        MergeTreeBlockOutputStream outstream(*merge_tree);
-//        std::cout << "9. \n";
-//
-//        outstream.write(b);
-
-        MergeTreeData & data = merge_tree->getData();
-        MergeTreeDataWriter writer(data);
-        std::cout << "9. \n";
-        auto part_blocks = writer.splitBlockIntoParts(b);
-        std::cout << "10. \n";
-        for (auto & current_block : part_blocks)
+        if (found > 0)
         {
-            std::cout << "11. \n";
-            MergeTreeData::MutableDataPartPtr part = writer.writeTempPart(current_block);
-            std::cout << "12. " << part->getFullPath() << " \n";
-            data.renameTempPartAndAdd(part, merge_tree->getIncrementPtr());
-            std::cout << "13. \n";
+            std::cout << found << " occurences found\n";
+            merge_tree->getData().renameAndDetachPart(mypart, "", false, true);
+            std::cout << "Storing new part.\n";
+            outstream.write(b);
         }
-
-
-//        auto part_blocks = writer.splitBlockIntoParts(b);
-//        for (auto & current_block : part_blocks)
-//        {
-            //MergeTreeData::MutableDataPartPtr part = writer.writeTempPart(current_block);
-//            std::cout << part->getFullPath() <<  " has been written\n";
-//        }
     }
+
+    std::cout << "Replaced " << replaced << " occurences.\n";
 
     return {};
 }

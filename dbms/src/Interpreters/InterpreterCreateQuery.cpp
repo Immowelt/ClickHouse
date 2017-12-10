@@ -103,8 +103,6 @@ BlockIO InterpreterCreateQuery::createDatabase(ASTCreateQuery & create)
 
     String database_name_escaped = escapeForFileName(database_name);
 
-    std::cout << "database_name_escaped " << database_name_escaped << "\n";
-
     /// Create directories for tables data and metadata.
     String path = context.getPath();
     String data_path = path + "data/" + database_name_escaped + "/";
@@ -112,9 +110,6 @@ BlockIO InterpreterCreateQuery::createDatabase(ASTCreateQuery & create)
 
     Poco::File(metadata_path).createDirectory();
     Poco::File(data_path).createDirectory();
-
-    std::cout << "data_path " << data_path << "\n";
-    std::cout << "metadata_path " << metadata_path << "\n";
 
     DatabasePtr database = DatabaseFactory::get(database_engine_name, database_name, metadata_path, context);
 

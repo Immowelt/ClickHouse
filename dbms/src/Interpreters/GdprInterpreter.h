@@ -2,14 +2,15 @@
 
 #include <Interpreters/Context.h>
 #include <Interpreters/IInterpreter.h>
-#include <Storages/MergeTree/MergeTreeBaseBlockInputStream.h>
+#include <Storages/MergeTree/MergeTreeBlockInputStream.h>
 
 namespace DB
 {
 
 class ExpressionAnalyzer;
 
-using MergeTreeStreams =  std::vector<MergeTreeBaseBlockInputStream*>;
+using MergeTreeStreams =  std::vector<std::shared_ptr<MergeTreeBlockInputStream>>;
+using MergeTreeStreamPartMap = std::map<String, std::shared_ptr<const MergeTreeDataPart> >;
 
 class GdprInterpreter: IInterpreter {
 public:

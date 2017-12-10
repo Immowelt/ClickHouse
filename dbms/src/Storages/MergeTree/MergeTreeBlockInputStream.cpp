@@ -114,12 +114,6 @@ try
         if (pre_column_names.empty())
             pre_column_names.push_back(column_names[0]);
 
-        for (auto z : pre_column_names)
-        {
-            std::cout << "[{]" << z << "]}]";
-        }
-
-
         const auto injected_pre_columns = injectRequiredColumns(storage, data_part, pre_column_names);
         if (!injected_pre_columns.empty())
             should_reorder = true;
@@ -129,7 +123,6 @@ try
         ///  (from storage expect to receive only the columns of the table).
 
         remove_prewhere_column = !pre_name_set.count(prewhere_column);
-        std::cout << "§§§" << prewhere_column << " " << remove_prewhere_column << "\n";
 
         Names post_column_names;
         for (const auto & name : column_names)

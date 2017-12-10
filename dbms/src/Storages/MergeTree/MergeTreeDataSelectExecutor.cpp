@@ -180,11 +180,6 @@ BlockInputStreams MergeTreeDataSelectExecutor::read(
 
     NamesAndTypesList available_real_columns = data.getColumnsList();
 
-    for(auto k : available_real_columns)
-    {
-        std::cout << "[:[[" << k.name << "]]:]";
-    }
-
     NamesAndTypesList available_real_and_virtual_columns = available_real_columns;
     for (const auto & name : virt_column_names)
         available_real_and_virtual_columns.emplace_back(data.getColumn(name));
@@ -509,7 +504,6 @@ BlockInputStreams MergeTreeDataSelectExecutor::read(
         ExpressionAnalyzer analyzer(select.prewhere_expression, context, nullptr, available_real_columns);
         prewhere_actions = analyzer.getActions(false);
         prewhere_column = select.prewhere_expression->getColumnName();
-        std::cout << "[[::]]" << prewhere_column << "[[::]]";
         SubqueriesForSets prewhere_subqueries = analyzer.getSubqueriesForSets();
 
         /** Compute the subqueries right now.
@@ -583,10 +577,6 @@ BlockInputStreams MergeTreeDataSelectExecutor::read(
     }
     else
     {
-        for (auto t : column_names_to_read)
-        {
-            std::cout << "[[[" << t << "]]]\t";
-        }
         res = spreadMarkRangesAmongStreams(
             parts_with_ranges,
             num_streams,
