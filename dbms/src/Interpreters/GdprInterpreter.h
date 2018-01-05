@@ -20,6 +20,7 @@ using MergeTreeStreamPartMap = std::map<String, std::shared_ptr<const MergeTreeD
 class GdprInterpreter: public IInterpreter {
 public:
 	GdprInterpreter(
+	        String database_,
 	        String table_,
 	        String prewhere_,
 	        String column_,
@@ -33,6 +34,7 @@ public:
 	virtual ~GdprInterpreter();
     virtual BlockIO execute();
 
+    String database;
     String table;
     String prewhere;
     String column;

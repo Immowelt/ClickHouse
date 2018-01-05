@@ -211,7 +211,10 @@ try
 
     applyOptions();
 
+    std::string default_database = config().getString("default_database", "default");
+
     interpreter = std::make_unique<GdprInterpreter>(
+            default_database,
             config().getString("table"),
             config().getString("prewhere"),
             config().getString("column"),
@@ -253,8 +256,6 @@ try
         context->setMarkCache(mark_cache_size);
 
 
-    std::string default_database = config().getString("default_database", "default");
-
     LOG_INFO(log, "Loading metadata.");
     loadMetadataSystem(*context);
     attachSystemTablesLocal(*context->getDatabase("system"));
@@ -262,7 +263,6 @@ try
     loadMetadata(*context);
     LOG_DEBUG(log, "Loaded metadata.");
 
-    context->setCurrentDatabase(default_database);
 
     updateData();
 

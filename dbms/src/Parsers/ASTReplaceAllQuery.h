@@ -14,6 +14,7 @@ namespace DB
 class ASTReplaceAllQuery : public ASTQueryWithOutput
 {
 public:
+    String database;
     String table;
     String prewhere;
     String column;
@@ -37,7 +38,9 @@ public:
 protected:
     void formatQueryImpl(const FormatSettings & settings, FormatState & state, FormatStateStacked frame) const override
     {
-        settings.ostr << (settings.hilite ? hilite_keyword : "") << "REPLACE ALL" << (settings.hilite ? hilite_none : "");
+        settings.ostr << (settings.hilite ? hilite_keyword : "") << "REPLACE ALL '" <<
+                oldvalue << "' WITH '" << newvalue << "'\nIN " << database << "." << table << " AT " << column
+                << "\nPREWHERE " << prewhere << (settings.hilite ? hilite_none : "");
     }
 };
 

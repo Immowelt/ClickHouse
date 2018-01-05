@@ -26,14 +26,15 @@ bool ParserReplaceAllQuery::parseImpl(Pos & pos, ASTPtr & node, Expected & expec
     ParserKeyword s_prewhere("PREWHERE");
     ParserStringLiteral oldvalue_p;
     ParserStringLiteral newvalue_p;
-    ParserIdentifier tablename_p;
+    ParserCompoundIdentifier tablename_p;
     ParserIdentifier columnname_p;
     ParserExpressionWithOptionalAlias exp_elem(false);
 
     ASTPtr oldvalue;
     ASTPtr newvalue;
-    ASTPtr tablename;
+    ASTPtr table;
     ASTPtr columnname;
+    ASTPtr prewhere_expression;
 
     auto query = std::make_shared<ASTReplaceAllQuery>();
 
@@ -55,7 +56,7 @@ bool ParserReplaceAllQuery::parseImpl(Pos & pos, ASTPtr & node, Expected & expec
     if (!s_in.ignore(pos, expected))
         return false;
 
-    if (!tablename_p.parse(pos, tablename, expected))
+    if (!tablename_p.parse(pos, table, expected))
         return false;
 
     if (!s_at.ignore(pos, expected))
@@ -64,13 +65,37 @@ bool ParserReplaceAllQuery::parseImpl(Pos & pos, ASTPtr & node, Expected & expec
     if (!columnname_p.parse(pos, columnname, expected))
         return false;
 
+    if (s_prewhere.ignore(pos, expected))
+    {
+        if (!exp_elem.parse(pos, prewhere_expression, expected))
+            return false;
+
+        query->prewhere = DB::toString(prewhere_expression->range);
+    }
+    else
+    {
+        query->prewhere = "1=1";
+    }
+
+
     query->range = StringRange(begin, pos);
 
     query->oldvalue = safeGet<const String &>(typeid_cast<ASTLiteral &>(*oldvalue).value);
     query->newvalue = safeGet<const String &>(typeid_cast<ASTLiteral &>(*newvalue).value);
-    query->table = typeid_cast<ASTIdentifier &>(*tablename).name;
+    if (table->children.size() == 2)
+    {
+        auto tablename = table->children.back();
+        auto db = table->children.front();
+        query->table = typeid_cast<ASTIdentifier &>(*tablename).name;
+        query->database = typeid_cast<ASTIdentifier &>(*db).name;
+    }
+    else
+    {
+        query->table = typeid_cast<ASTIdentifier &>(*table).name;
+        query->database = "default";
+    }
     query->column = typeid_cast<ASTIdentifier &>(*columnname).name;
-    query->prewhere = "1=1";
+
 
     node = query;
 

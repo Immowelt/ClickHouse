@@ -30,12 +30,14 @@ namespace ErrorCodes
 
 
 GdprInterpreter::GdprInterpreter(
+        String database_,
         String table_,
         String prewhere_,
         String column_,
         String oldvalue_,
         String newvalue_,
         Context & context_):
+                database(database_),
                 table(table_),
                 prewhere(prewhere_),
                 column(column_),
@@ -73,6 +75,7 @@ GdprInterpreter::GdprInterpreter(const ASTPtr & query_ptr_, Context & context_)
 
     if(ast)
     {
+        database = ast->database;
         table = ast->table;
         prewhere = ast->prewhere;
         column = ast->column;
@@ -118,7 +121,9 @@ void GdprInterpreter::fillParts(BlockInputStreamPtr parent, MergeTreeStreamPartM
 
 BlockIO GdprInterpreter::execute()
 {
-    auto storage = context.getTable(context.getCurrentDatabase(), table);
+    log("TRACE", "GDPR in", database + "." + table);
+    context.setCurrentDatabase(database);
+    auto storage = context.getTable(database, table);
     StorageMergeTree * merge_tree = dynamic_cast<StorageMergeTree *>(storage.get());
     StorageReplicatedMergeTree * repl_merge_tree = nullptr;
 
