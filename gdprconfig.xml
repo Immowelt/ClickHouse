@@ -11,11 +11,18 @@
     <mark_cache_size>5368709120</mark_cache_size>
     <tcp_port>9000</tcp_port>
     <http_port>8123</http_port>
+    <interserver_http_port>9009</interserver_http_port>
+    <listen_host>::</listen_host>    
 
     <path>/var/lib/clickhouse/</path>
     <tmp_path>/var/lib/clickhouse/tmp/</tmp_path>
     <users_config>gdprusers.xml</users_config> 
     <default_profile>default</default_profile>
     <default_database>default</default_database>
-
+    <zookeeper>
+         <node index="1">
+               <host>127.0.0.1</host>
+               <port>2181</port>
+         </node>
+    </zookeeper>
 </yandex>

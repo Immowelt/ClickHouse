@@ -31,6 +31,7 @@
 #include <Interpreters/InterpreterKillQueryQuery.h>
 #include <Interpreters/InterpreterSystemQuery.h>
 #include <Interpreters/InterpreterFactory.h>
+#include <Interpreters/GdprInterpreter.h>
 
 #include <Common/typeid_cast.h>
 #include <Parsers/ASTSystemQuery.h>
@@ -130,6 +131,10 @@ std::unique_ptr<IInterpreter> InterpreterFactory::get(ASTPtr & query, Context & 
     {
         throwIfReadOnly(context);
         return std::make_unique<InterpreterSystemQuery>(query, context);
+    }
+    else if (typeid_cast<ASTReplaceAllQuery *>(query.get()))
+    {
+        return std::make_unique<GdprInterpreter>(query, context);
     }
     else
         throw Exception("Unknown type of query: " + query->getID(), ErrorCodes::UNKNOWN_TYPE_OF_QUERY);

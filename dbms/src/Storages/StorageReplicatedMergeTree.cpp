@@ -2736,6 +2736,29 @@ void StorageReplicatedMergeTree::clearColumnInPartition(
     }
 }
 
+void StorageReplicatedMergeTree::dropSinglePart(String partname, bool detach, const Context & context)
+{
+    LogEntry entry;
+    entry.type = LogEntry::DROP_RANGE;
+    entry.source_replica = replica_name;
+    entry.new_part_name = partname;
+    entry.detach = detach;
+    entry.create_time = time(nullptr);
+
+    String log_znode_path = getZooKeeper()->create(zookeeper_path + "/log/log-", entry.toString(), zkutil::CreateMode::PersistentSequential);
+    entry.znode_name = log_znode_path.substr(log_znode_path.find_last_of('/') + 1);
+
+    /// If necessary, wait until the operation is performed on itself or on all replicas.
+    if (context.getSettingsRef().replication_alter_partitions_sync != 0)
+    {
+        if (context.getSettingsRef().replication_alter_partitions_sync == 1)
+            waitForReplicaToProcessLogEntry(replica_name, entry);
+        else
+            waitForAllReplicasToProcessLogEntry(entry);
+    }
+
+}
+
 void StorageReplicatedMergeTree::dropPartition(const ASTPtr & query, const ASTPtr & partition, bool detach, const Context & context)
 {
     assertNotReadonly();

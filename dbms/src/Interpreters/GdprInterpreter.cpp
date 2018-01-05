@@ -2,6 +2,7 @@
 
 #include <strings.h>
 
+#include <DataStreams/OneBlockInputStream.h>
 #include <Interpreters/ExpressionAnalyzer.h>
 #include <Interpreters/ExpressionActions.h>
 #include <Interpreters/InterpreterSelectQuery.h>
@@ -13,12 +14,20 @@
 #include <Storages/MergeTree/MergeTreeThreadBlockInputStream.h>
 #include <Storages/MergeTree/MergeTreeDataWriter.h>
 #include <Storages/MergeTree/MergeTreeBlockOutputStream.h>
+#include <Storages/MergeTree/ReplicatedMergeTreeBlockOutputStream.h>
 #include <Storages/StorageMergeTree.h>
+#include <Storages/StorageReplicatedMergeTree.h>
 
 #include <Poco/File.h>
 
 namespace DB
 {
+
+namespace ErrorCodes
+{
+    extern const int SYNTAX_ERROR;
+}
+
 
 GdprInterpreter::GdprInterpreter(
         String table_,
@@ -34,14 +43,57 @@ GdprInterpreter::GdprInterpreter(
                 newvalue(newvalue_),
                 context(context_)
 {
+    initLogBlock();
 }
+
+void GdprInterpreter::initLogBlock()
+{
+    severity_column = ColumnWithTypeAndName{std::make_shared<ColumnString>(), std::make_shared<DataTypeString>(), "severity"};
+    message_column = ColumnWithTypeAndName{std::make_shared<ColumnString>(), std::make_shared<DataTypeString>(), "message"};
+    parameter_column = ColumnWithTypeAndName{std::make_shared<ColumnString>(), std::make_shared<DataTypeString>(), "parameter"};
+
+    logstream= std::make_shared<OneBlockInputStream>(
+        Block{severity_column, message_column, parameter_column});
+}
+
+void GdprInterpreter::log(String severity, String message, String parameter)
+{
+    severity_column.column->insert(severity);
+    message_column.column->insert(message);
+    parameter_column.column->insert(parameter);
+
+    //std::cout << "[" << severity << "] " << message << " " << parameter << "\n";
+    LOG_INFO(&Logger::get("GdprInterpreter"), message + " " + parameter);
+}
+
+GdprInterpreter::GdprInterpreter(const ASTPtr & query_ptr_, Context & context_)
+: context(context_)
+{
+    ASTReplaceAllQuery * ast = typeid_cast<ASTReplaceAllQuery *>(query_ptr_.get());
+
+    if(ast)
+    {
+        table = ast->table;
+        prewhere = ast->prewhere;
+        column = ast->column;
+        oldvalue = ast->oldvalue;
+        newvalue = ast->newvalue;
+    }
+    else
+    {
+        throw Exception("GdprInterpreter called not for REPLACE ALL query???", ErrorCodes::SYNTAX_ERROR);
+    }
+
+    initLogBlock();
+}
+
 
 GdprInterpreter::~GdprInterpreter()
 {
 }
 
 
-void fillParts(BlockInputStreamPtr parent, MergeTreeStreamPartMap & parts)
+void GdprInterpreter::fillParts(BlockInputStreamPtr parent, MergeTreeStreamPartMap & parts)
 {
     MergeTreeBaseBlockInputStream* p = dynamic_cast<MergeTreeBaseBlockInputStream*>(parent.get());
 
@@ -63,39 +115,26 @@ void fillParts(BlockInputStreamPtr parent, MergeTreeStreamPartMap & parts)
     }
 }
 
-void fillStreams(BlockInputStreamPtr parent, MergeTreeStreams & streams, MergeTreeStreamPartMap & parts)
-{
-    MergeTreeBaseBlockInputStream* p = dynamic_cast<MergeTreeBaseBlockInputStream*>(parent.get());
-
-    if (p)
-    {
-        for(auto part : p->getDataParts())
-        {
-            String s = part->getFullPath();
-            if (parts.count(s) == 0)
-            {
-                parts[s] = part;
-                streams.push_back(std::move(std::make_shared<MergeTreeBlockInputStream>(
-                          part->storage, part, 10000000, 0, 0, part->storage.getColumnNamesList(), MarkRanges(1, MarkRange(0, part->marks_count)),
-                          false, nullptr, "", true, 0, DBMS_DEFAULT_BUFFER_SIZE, false)));
-            }
-        }
-    }
-
-    for(auto child: parent->getChildren())
-    {
-        fillStreams(child, streams, parts);
-    }
-}
-
-
 
 BlockIO GdprInterpreter::execute()
 {
     auto storage = context.getTable(context.getCurrentDatabase(), table);
-    auto merge_tree = dynamic_cast<StorageMergeTree *>(storage.get());
+    StorageMergeTree * merge_tree = dynamic_cast<StorageMergeTree *>(storage.get());
+    StorageReplicatedMergeTree * repl_merge_tree = nullptr;
 
-    std::cout << "Determining all affected parts\n";
+    if(!merge_tree)
+    {
+        repl_merge_tree = dynamic_cast<StorageReplicatedMergeTree *>(storage.get());
+        if (!repl_merge_tree)
+        {
+            log("ERROR", "Only MergeTree and ReplicatedMergeTree engines are supported", table);
+            BlockIO res;
+            res.in = logstream;
+            return res;
+        }
+    }
+
+    log("TRACE", "Determining all affected parts", "");
 
     // Its not possible to directly ask a MergeTree to return all parts that could match a specific prewhere statement.
     // So we construct a dummy select statement, and then retrieve the affected parts from the returned input streams.
@@ -123,27 +162,32 @@ BlockIO GdprInterpreter::execute()
     }
 
     // Display affected parts to check how many of them are affected, to be able to track performance problems.
-    for (auto pp: merge_tree->getData().getDataParts())
+    if (repl_merge_tree)
     {
-        if (parts.count(pp->getFullPath()) == 1)
+        for (auto pp: repl_merge_tree->getData().getDataParts())
         {
-            std::cout << "* ";
+            log("TRACE", (parts.count(pp->getFullPath()) == 1) ? "AFFECTED" : "NOT AFFECTED", pp->getNameWithPrefix());
         }
-        else
+    }
+    else
+    {
+        for (auto pp: merge_tree->getData().getDataParts())
         {
-            std::cout << "  ";
+            log("TRACE", (parts.count(pp->getFullPath()) == 1) ? "AFFECTED" : "NOT AFFECTED", pp->getNameWithPrefix());
         }
-        std::cout << pp->getFullPath() << "\n";
     }
 
     // Now go through all streams, read them, update the value in memory and write out into a new part
-    std::cout << "Searching for occurences\n";
+    log("TRACE", "Searching for occurences", "");
     size_t replaced = 0;
-    MergeTreeBlockOutputStream outstream(*merge_tree);
+    std::unique_ptr<MergeTreeBlockOutputStream> outstream = std::make_unique<MergeTreeBlockOutputStream>(*merge_tree);
+    std::unique_ptr<ReplicatedMergeTreeBlockOutputStream> repl_outstream;
+    if (repl_merge_tree)
+        repl_outstream = std::make_unique<ReplicatedMergeTreeBlockOutputStream>(*repl_merge_tree, 0, 0, false);
     for(auto stream : streams)
     {
         auto mypart = stream->getDataParts()[0];
-        std::cout << "Scanning " << mypart->getFullPath() << "\n";
+        log("TRACE", "Scanning ", mypart->getNameWithPrefix());
         std::vector<Block> blocks;
         int rows = 0;
 
@@ -176,7 +220,7 @@ BlockIO GdprInterpreter::execute()
                 StringRef s = col->getDataAtWithTerminatingZero(row);
                 if(!strcasecmp(s.data, oldvalue.c_str()))
                 {
-                    std::cout << s.data << " vs " << oldvalue.c_str() << " - replacing\n";
+                    //std::cout << s.data << " vs " << oldvalue.c_str() << " - replacing\n";
                     newcolumn.column->insertDataWithTerminatingZero(newval, newvallen);
                     ++replaced;
                     ++found;
@@ -196,35 +240,53 @@ BlockIO GdprInterpreter::execute()
             }
         }
 
-        std::cout << "Scanned " << rows << " rows\n";
+        log("TRACE", "Scanned rows", std::to_string(rows));
 
         if (found > 0)
         {
-            std::cout << found << " occurences found\n";
+            log("INFO", "Occurences found", std::to_string(found));
 
             // As soon as the first occurence found in the current part, we can already detach it, because we know
             // that we are going to replace it. If we add a new part first, something could happen that would
             // merge the new and the old parts together, making further deduplication complicated.
             // OTOH if we detach the part first and then crash failing to write a new part, it would be
             // possible to recover by attaching the old part again.
-            merge_tree->getData().renameAndDetachPart(mypart, "", false, true);
-            std::cout << "Storing new part.\n";
-            for(auto & b : blocks)
+            if (repl_merge_tree)
             {
-                outstream.write(b);
+                //repl_merge_tree->getData().renameAndDetachPart(mypart, "", false, true);
+                repl_merge_tree->dropSinglePart(mypart->getNameWithPrefix(), true, context);
             }
-            std::cout << "New part stored.\n"; // unfortunately outstream doesn't return the name of the new part(s), so we can't log them
+            else
+            {
+                merge_tree->getData().renameAndDetachPart(mypart, "", false, true);
+            }
+
+            log("INFO", "Detaching old part", mypart->getNameWithPrefix());
+            log("TRACE", "Storing new part", "");
+            if (repl_merge_tree)
+            {
+                for(auto & b : blocks)
+                {
+                    repl_outstream->write(b);
+                }
+            }
+            else
+            {
+                for(auto & b : blocks)
+                {
+                    outstream->write(b);
+                }
+            }
+            log("TRACE", "New part stored.", ""); // unfortunately outstream doesn't return the name of the new part(s), so we can't log them
         }
     }
 
-    std::cout << "Replaced in total " << replaced << " occurences.\n";
+    log("INFO", "Occurences replaced in total ", std::to_string(replaced));
 
-    std::cout << "Optimizing " << table << ".\n";
-    merge_tree->optimize(nullptr, nullptr, true, false, context);
 
-    std::cout << "The detached parts can now be deleted.\n";
-
-    return {};
+    BlockIO res;
+    res.in = logstream;
+    return res;
 }
 
 }
