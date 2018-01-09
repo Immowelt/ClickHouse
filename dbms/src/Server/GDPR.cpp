@@ -213,7 +213,7 @@ try
 
     std::string default_database = config().getString("default_database", "default");
 
-    interpreter = std::make_unique<GdprInterpreter>(
+    interpreter = std::make_unique<InterpreterReplaceAll>(
             default_database,
             config().getString("table"),
             config().getString("prewhere"),
@@ -315,18 +315,6 @@ void GDPR::updateData()
     LOG_INFO(log, "Updating " << interpreter->table << "." << interpreter->column << " where " << interpreter->prewhere << " old " << interpreter->oldvalue << " with " << interpreter->newvalue);
 
     interpreter->execute();
-
-//
-//    for (const auto & query : queries)
-//    {
-//        ReadBufferFromString read_buf(query);
-//        WriteBufferFromFileDescriptor write_buf(STDOUT_FILENO);
-//
-//        if (verbose)
-//            LOG_INFO(log, "Executing query: " << query);
-//
-//        executeQuery(read_buf, write_buf, /* allow_into_outfile = */ true, *context, {});
-//    }
 }
 
 static const char * minimal_default_user_xml =

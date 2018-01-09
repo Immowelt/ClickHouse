@@ -17,9 +17,9 @@ class ExpressionAnalyzer;
 using MergeTreeStreams =  std::vector<std::shared_ptr<MergeTreeBlockInputStream>>;
 using MergeTreeStreamPartMap = std::map<String, std::shared_ptr<const MergeTreeDataPart> >;
 
-class GdprInterpreter: public IInterpreter {
+class InterpreterReplaceAll: public IInterpreter {
 public:
-	GdprInterpreter(
+	InterpreterReplaceAll(
 	        String database_,
 	        String table_,
 	        String prewhere_,
@@ -28,10 +28,10 @@ public:
             String newvalue_,
 	        Context & context_);
 
-	GdprInterpreter(const ASTPtr & query_ptr_, Context & context_);
+	InterpreterReplaceAll(const ASTPtr & query_ptr_, Context & context_);
 
 
-	virtual ~GdprInterpreter();
+	virtual ~InterpreterReplaceAll();
     virtual BlockIO execute();
 
     String database;
@@ -40,11 +40,13 @@ public:
     String column;
     String oldvalue;
     String newvalue;
+    size_t blockSize = 10000;
 
 private:
     void initLogBlock();
     void log(String severity, String message, String parameter);
     void fillParts(BlockInputStreamPtr parent, MergeTreeStreamPartMap & parts);
+    bool streamContainsOldValue(std::shared_ptr<MergeTreeBlockInputStream> stream);
 
     std::unique_ptr<ExpressionAnalyzer> query_analyzer;
     std::shared_ptr<OneBlockInputStream> logstream;

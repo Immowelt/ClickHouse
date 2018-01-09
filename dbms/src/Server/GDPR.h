@@ -2,7 +2,8 @@
 
 #include <Poco/Util/Application.h>
 #include <memory>
-#include <Interpreters/GdprInterpreter.h>
+
+#include "../Interpreters/InterpreterReplaceAll.h"
 
 namespace DB
 {
@@ -39,7 +40,7 @@ private:
 protected:
 
     std::unique_ptr<Context> context;
-    std::unique_ptr<GdprInterpreter> interpreter;
+    std::unique_ptr<InterpreterReplaceAll> interpreter;
 };
 
 }

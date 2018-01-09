@@ -1,4 +1,4 @@
-#include "GdprInterpreter.h"
+#include "InterpreterReplaceAll.h"
 
 #include <strings.h>
 
@@ -29,7 +29,7 @@ namespace ErrorCodes
 }
 
 
-GdprInterpreter::GdprInterpreter(
+InterpreterReplaceAll::InterpreterReplaceAll(
         String database_,
         String table_,
         String prewhere_,
@@ -48,7 +48,7 @@ GdprInterpreter::GdprInterpreter(
     initLogBlock();
 }
 
-void GdprInterpreter::initLogBlock()
+void InterpreterReplaceAll::initLogBlock()
 {
     severity_column = ColumnWithTypeAndName{std::make_shared<ColumnString>(), std::make_shared<DataTypeString>(), "severity"};
     message_column = ColumnWithTypeAndName{std::make_shared<ColumnString>(), std::make_shared<DataTypeString>(), "message"};
@@ -58,7 +58,7 @@ void GdprInterpreter::initLogBlock()
         Block{severity_column, message_column, parameter_column});
 }
 
-void GdprInterpreter::log(String severity, String message, String parameter)
+void InterpreterReplaceAll::log(String severity, String message, String parameter)
 {
     severity_column.column->insert(severity);
     message_column.column->insert(message);
@@ -68,7 +68,7 @@ void GdprInterpreter::log(String severity, String message, String parameter)
     LOG_INFO(&Logger::get("GdprInterpreter"), message + " " + parameter);
 }
 
-GdprInterpreter::GdprInterpreter(const ASTPtr & query_ptr_, Context & context_)
+InterpreterReplaceAll::InterpreterReplaceAll(const ASTPtr & query_ptr_, Context & context_)
 : context(context_)
 {
     ASTReplaceAllQuery * ast = typeid_cast<ASTReplaceAllQuery *>(query_ptr_.get());
@@ -91,12 +91,12 @@ GdprInterpreter::GdprInterpreter(const ASTPtr & query_ptr_, Context & context_)
 }
 
 
-GdprInterpreter::~GdprInterpreter()
+InterpreterReplaceAll::~InterpreterReplaceAll()
 {
 }
 
 
-void GdprInterpreter::fillParts(BlockInputStreamPtr parent, MergeTreeStreamPartMap & parts)
+void InterpreterReplaceAll::fillParts(BlockInputStreamPtr parent, MergeTreeStreamPartMap & parts)
 {
     MergeTreeBaseBlockInputStream* p = dynamic_cast<MergeTreeBaseBlockInputStream*>(parent.get());
 
@@ -118,8 +118,29 @@ void GdprInterpreter::fillParts(BlockInputStreamPtr parent, MergeTreeStreamPartM
     }
 }
 
+bool InterpreterReplaceAll::streamContainsOldValue(std::shared_ptr<MergeTreeBlockInputStream> stream)
+{
+    while(true)
+    {
+        Block b = stream->read();
+        if (b.rows() == 0)
+            return false;
 
-BlockIO GdprInterpreter::execute()
+        size_t pos = b.getPositionByName(column);
+        ColumnWithTypeAndName & oldcolumn = b.getByPosition(pos);
+        ColumnString * col = dynamic_cast<ColumnString *>(oldcolumn.column.get());
+        for(size_t row = 0; row < b.rows(); ++row)
+        {
+            StringRef s = col->getDataAtWithTerminatingZero(row);
+            if(!strcasecmp(s.data, oldvalue.c_str()))
+                return true;
+        }
+    }
+}
+
+
+
+BlockIO InterpreterReplaceAll::execute()
 {
     log("TRACE", "GDPR in", database + "." + table);
     context.setCurrentDatabase(database);
@@ -154,18 +175,6 @@ BlockIO GdprInterpreter::execute()
     MergeTreeStreamPartMap parts;
     fillParts(block.in, parts);
 
-    // Now create input streams that would read the whole parts. We want to read whole parts, because we must replace the whole
-    // affected part with its copy with some modified values. We also want to read all columns, because the column to modify might be
-    // the part of the primary key, so when it gets modified the sorting order will change and all rows must be written anew.
-    MergeTreeStreams streams;
-    for (auto part_pair : parts)
-    {
-        streams.push_back(std::move(std::make_shared<MergeTreeBlockInputStream>(
-                part_pair.second->storage, part_pair.second, 10000000, 0, 0, part_pair.second->storage.getColumnNamesList(),
-                MarkRanges(1, MarkRange(0, part_pair.second->marks_count)),
-                  false, nullptr, "", true, 0, DBMS_DEFAULT_BUFFER_SIZE, false)));
-    }
-
     // Display affected parts to check how many of them are affected, to be able to track performance problems.
     if (repl_merge_tree)
     {
@@ -182,112 +191,120 @@ BlockIO GdprInterpreter::execute()
         }
     }
 
-    // Now go through all streams, read them, update the value in memory and write out into a new part
+
+    // Now create input streams that would read the whole parts. We want to read whole parts, because we must replace the whole
+    // affected part with its copy with some modified values. We also want to read all columns, because the column to modify might be
+    // the part of the primary key, so when it gets modified the sorting order will change and all rows must be written anew.
+    // BUT, Because a part can be very large, cannot read the whole part in the memory.
+    // Instead, must first read it once block for block to find out whether it contains the oldvalue
+    // Then if it contains the old value, must read it block for block again to write a new part containing the new value
+    MergeTreeStreams readStreams;
     log("TRACE", "Searching for occurences", "");
-    size_t replaced = 0;
-    std::unique_ptr<MergeTreeBlockOutputStream> outstream = std::make_unique<MergeTreeBlockOutputStream>(*merge_tree);
-    std::unique_ptr<ReplicatedMergeTreeBlockOutputStream> repl_outstream;
-    if (repl_merge_tree)
-        repl_outstream = std::make_unique<ReplicatedMergeTreeBlockOutputStream>(*repl_merge_tree, 0, 0, false);
-    for(auto stream : streams)
+    for (auto part_pair : parts)
     {
-        auto mypart = stream->getDataParts()[0];
+        std::shared_ptr<MergeTreeBlockInputStream> searchStream = std::make_shared<MergeTreeBlockInputStream>(
+                part_pair.second->storage, part_pair.second, blockSize, 0, 0, part_pair.second->storage.getColumnNamesList(),
+                MarkRanges(1, MarkRange(0, part_pair.second->marks_count)),
+                  false, nullptr, "", true, 0, DBMS_DEFAULT_BUFFER_SIZE, false);
+
+        auto mypart = searchStream->getDataParts()[0];
         log("TRACE", "Scanning ", mypart->getNameWithPrefix());
-        std::vector<Block> blocks;
-        int rows = 0;
 
-        // Read all blocks from the current part
-        while(true)
+        if(streamContainsOldValue(searchStream))
         {
-            Block b = stream->read();
-            if (b.rows() == 0)
-                break;
-
-            rows += b.rows();
-            blocks.push_back(std::move(b));
+            readStreams.push_back(std::move(std::make_shared<MergeTreeBlockInputStream>(
+                    part_pair.second->storage, part_pair.second, blockSize, 0, 0, part_pair.second->storage.getColumnNamesList(),
+                    MarkRanges(1, MarkRange(0, part_pair.second->marks_count)),
+                      false, nullptr, "", true, 0, DBMS_DEFAULT_BUFFER_SIZE, false)));
         }
 
+        //searchStream->finish();
+    }
 
-        // For each block, search and replace the values in memory. Here can be some memory leaks.
-        size_t found = 0;
-        for(auto & b : blocks)
+    size_t replaced = 0;
+
+    if (readStreams.size() > 0)
+    {
+        log("TRACE", "Replacing occurences in the following number of parts:", std::to_string(readStreams.size()));
+
+        size_t rows = 0;
+        std::unique_ptr<MergeTreeBlockOutputStream> outstream = std::make_unique<MergeTreeBlockOutputStream>(*merge_tree);
+        std::unique_ptr<ReplicatedMergeTreeBlockOutputStream> repl_outstream;
+        if (repl_merge_tree)
+            repl_outstream = std::make_unique<ReplicatedMergeTreeBlockOutputStream>(*repl_merge_tree, 0, 0, false);
+
+        for(auto stream : readStreams)
         {
-            size_t pos = b.getPositionByName(column);
-            ColumnWithTypeAndName & oldcolumn = b.getByPosition(pos);
-            ColumnWithTypeAndName newcolumn = oldcolumn.cloneEmpty();
-            ColumnString * col = dynamic_cast<ColumnString *>(oldcolumn.column.get());
-            const char* newval = newvalue.c_str();
-            size_t newvallen = strlen(newval) + 1;
-
-            // Iterate through all rows of a block. It seems to be compilicated to vectorize this operation.
-            for(size_t row = 0; row < b.rows(); ++row)
+            // For each block, search and replace the values in memory. Here can be some memory leaks.
+            while(true)
             {
-                StringRef s = col->getDataAtWithTerminatingZero(row);
-                if(!strcasecmp(s.data, oldvalue.c_str()))
+                Block b = stream->read();
+                if (b.rows() == 0)
+                    break;
+
+                size_t pos = b.getPositionByName(column);
+                ColumnWithTypeAndName & oldcolumn = b.getByPosition(pos);
+                ColumnWithTypeAndName newcolumn = oldcolumn.cloneEmpty();
+                ColumnString * col = dynamic_cast<ColumnString *>(oldcolumn.column.get());
+                const char* newval = newvalue.c_str();
+                size_t newvallen = strlen(newval) + 1;
+
+                // Iterate through all rows of a block. It seems to be compilicated to vectorize this operation.
+                for(size_t row = 0; row < b.rows(); ++row)
                 {
-                    //std::cout << s.data << " vs " << oldvalue.c_str() << " - replacing\n";
-                    newcolumn.column->insertDataWithTerminatingZero(newval, newvallen);
-                    ++replaced;
-                    ++found;
+                    StringRef s = col->getDataAtWithTerminatingZero(row);
+                    if(!strcasecmp(s.data, oldvalue.c_str()))
+                    {
+                        //std::cout << s.data << " vs " << oldvalue.c_str() << " - replacing\n";
+                        newcolumn.column->insertDataWithTerminatingZero(newval, newvallen);
+                        ++replaced;
+                    }
+                    else
+                    {
+                        //std::cout << s.data << " vs " << oldvalue.c_str() << " - leaving\n";
+                        newcolumn.column->insertFrom(*col, row);
+                    }
+                }
+
+                //if at least one replacement found, remove the old column and add the new column to the block.
+                b.erase(pos);
+                b.insert(pos, newcolumn);
+
+                if (repl_merge_tree)
+                {
+                    repl_outstream->write(b);
                 }
                 else
                 {
-                    //std::cout << s.data << " vs " << oldvalue.c_str() << " - leaving\n";
-                    newcolumn.column->insertFrom(*col, row);
+                    outstream->write(b);
                 }
+
+                rows += b.rows();
             }
 
-            //if at least one replacement found, remove the old column and add the new column to the block.
-            if (found > 0)
-            {
-                b.erase(pos);
-                b.insert(pos, newcolumn);
-            }
+            log("TRACE", "Scanned rows", std::to_string(rows));
+
+            log("TRACE", "New part stored.", ""); // unfortunately outstream doesn't return the name of the new part(s), so we can't log them
         }
 
-        log("TRACE", "Scanned rows", std::to_string(rows));
+        log("TRACE", "Detaching old parts.", "");
 
-        if (found > 0)
+        for(auto part_pair : parts)
         {
-            log("INFO", "Occurences found", std::to_string(found));
-
-            // As soon as the first occurence found in the current part, we can already detach it, because we know
-            // that we are going to replace it. If we add a new part first, something could happen that would
-            // merge the new and the old parts together, making further deduplication complicated.
-            // OTOH if we detach the part first and then crash failing to write a new part, it would be
-            // possible to recover by attaching the old part again.
+            auto mypart = part_pair.second;
+            log("INFO", "Detaching old part", mypart->getNameWithPrefix());
             if (repl_merge_tree)
             {
-                //repl_merge_tree->getData().renameAndDetachPart(mypart, "", false, true);
                 repl_merge_tree->dropSinglePart(mypart->getNameWithPrefix(), true, context);
             }
             else
             {
                 merge_tree->getData().renameAndDetachPart(mypart, "", false, true);
             }
-
-            log("INFO", "Detaching old part", mypart->getNameWithPrefix());
-            log("TRACE", "Storing new part", "");
-            if (repl_merge_tree)
-            {
-                for(auto & b : blocks)
-                {
-                    repl_outstream->write(b);
-                }
-            }
-            else
-            {
-                for(auto & b : blocks)
-                {
-                    outstream->write(b);
-                }
-            }
-            log("TRACE", "New part stored.", ""); // unfortunately outstream doesn't return the name of the new part(s), so we can't log them
         }
     }
 
     log("INFO", "Occurences replaced in total ", std::to_string(replaced));
-
 
     BlockIO res;
     res.in = logstream;
