@@ -10,6 +10,7 @@
 #include <Common/typeid_cast.h>
 #include <Common/MemoryTracker.h>
 #include <Poco/File.h>
+#include <Poco/Timestamp.h>
 
 
 namespace DB
@@ -330,6 +331,20 @@ MergedBlockOutputStream::MergedBlockOutputStream(
 MergedBlockOutputStream::MergedBlockOutputStream(
     MergeTreeData & storage_,
     String part_path_,
+    Block blockWithSingleColumn) : IMergedBlockOutputStream(
+            storage_, storage_.context.getSettings().min_compress_block_size,
+            storage_.context.getSettings().max_compress_block_size, storage_.context.chooseCompressionSettings(0, 0),
+            storage_.context.getSettings().min_bytes_to_use_direct_io), part_path(part_path_)
+{
+    //No init() or addstream, because that would reset the current column file and the primary.idx
+    //See writeSingleColumn()
+    columns_list = blockWithSingleColumn.getColumnsList();
+}
+
+
+MergedBlockOutputStream::MergedBlockOutputStream(
+    MergeTreeData & storage_,
+    String part_path_,
     const NamesAndTypesList & columns_list_,
     CompressionSettings compression_settings,
     const MergeTreeData::DataPart::ColumnToSize & merged_column_to_size_,
@@ -364,6 +379,41 @@ void MergedBlockOutputStream::write(const Block & block)
 {
     writeImpl(block, nullptr);
 }
+
+void _rename(String from, String to)
+{
+    Poco::File from_file(from);
+    Poco::File to_file(to);
+    if (to_file.exists())
+    {
+        to_file.remove(true);
+    }
+
+    from_file.setLastModified(Poco::Timestamp::fromEpochTime(time(nullptr)));
+    from_file.renameTo(to);
+}
+
+void MergedBlockOutputStream::writeSingleColumn(const ColumnWithTypeAndName column, MergeTreeData::DataPart::Checksums checksums)
+{
+    Poco::Timestamp ts;
+    String _ts = std::to_string(ts.epochMicroseconds());
+    _rename(part_path + "/" + column.name + ".bin", part_path + "/_backup_" + _ts + "_" + column.name + ".bin");
+    _rename(part_path + "/" + column.name + ".mrk", part_path + "/_backup_" + _ts + "_" + column.name + ".mrk");
+
+    addStream(part_path, columns_list.front().name, *(columns_list.front().type), 0, 0, "", false);
+
+    OffsetColumns dummy;
+    writeData(column.name, column.type, column.column, dummy, 0, false);
+    column_streams[column.name]->finalize();
+    column_streams[column.name]->addToChecksums(checksums);
+
+    {
+        /// Update checksums.
+        WriteBufferFromFile out(part_path + "checksums.txt", 4096);
+        checksums.write(out);
+    }
+}
+
 
 /** If the data is not sorted, but we pre-calculated the permutation, after which they will be sorted.
     * This method is used to save RAM, since you do not need to keep two blocks at once - the source and the sorted.

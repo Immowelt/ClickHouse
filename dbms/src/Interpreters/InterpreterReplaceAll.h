@@ -5,6 +5,8 @@
 #include <Interpreters/IInterpreter.h>
 #include <Parsers/ASTReplaceAllQuery.h>
 #include <Storages/MergeTree/MergeTreeBlockInputStream.h>
+#include <Storages/StorageMergeTree.h>
+#include <Storages/StorageReplicatedMergeTree.h>
 
 #include <Common/typeid_cast.h>
 
@@ -47,6 +49,9 @@ private:
     void log(String severity, String message, String parameter);
     void fillParts(BlockInputStreamPtr parent, MergeTreeStreamPartMap & parts);
     bool streamContainsOldValue(std::shared_ptr<MergeTreeBlockInputStream> stream);
+    BlockIO fullBlockReplace(MergeTreeStreamPartMap& parts, StorageMergeTree * merge_tree, StorageReplicatedMergeTree * repl_merge_tree);
+    BlockIO singleColumnReplace(MergeTreeStreamPartMap& parts, StorageMergeTree * merge_tree);
+    Block readAndReplace(std::shared_ptr<MergeTreeBlockInputStream> readStream, size_t & replaced);
 
     std::unique_ptr<ExpressionAnalyzer> query_analyzer;
     std::shared_ptr<OneBlockInputStream> logstream;

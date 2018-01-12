@@ -15,6 +15,7 @@
 #include <Storages/MergeTree/MergeTreeDataWriter.h>
 #include <Storages/MergeTree/MergeTreeBlockOutputStream.h>
 #include <Storages/MergeTree/ReplicatedMergeTreeBlockOutputStream.h>
+#include <Storages/MergeTree/MergedBlockOutputStream.h>
 #include <Storages/StorageMergeTree.h>
 #include <Storages/StorageReplicatedMergeTree.h>
 
@@ -139,10 +140,9 @@ bool InterpreterReplaceAll::streamContainsOldValue(std::shared_ptr<MergeTreeBloc
 }
 
 
-
 BlockIO InterpreterReplaceAll::execute()
 {
-    log("TRACE", "GDPR in", database + "." + table);
+    log("TRACE", "Replace all in", database + "." + table);
     context.setCurrentDatabase(database);
     auto storage = context.getTable(database, table);
     StorageMergeTree * merge_tree = dynamic_cast<StorageMergeTree *>(storage.get());
@@ -191,7 +191,102 @@ BlockIO InterpreterReplaceAll::execute()
         }
     }
 
+    // Trying to use quick method working only on columns not in the primary key
+    if (merge_tree)
+    {
+        auto primaryKey = merge_tree->getData().getSortDescription();
+        bool found = false;
+        for(auto col : primaryKey)
+        {
+            if (col.column_name == column)
+            {
+                found = true;
+                break;
+            }
+        }
+        if (!found)
+            return singleColumnReplace(parts, merge_tree);
+    }
+    return fullBlockReplace(parts, merge_tree, repl_merge_tree);
+}
 
+BlockIO InterpreterReplaceAll::singleColumnReplace(MergeTreeStreamPartMap& parts, StorageMergeTree * merge_tree)
+{
+    log("TRACE", "Single column replace", "");
+
+    // Read only the column to replace from the parts
+    Names singleColumn;
+    singleColumn.push_back(column);
+
+    size_t replaced = 0;
+    for (auto part_pair : parts)
+    {
+        // Reading the single column of whole part. If the part is too large, we'll get OOM here.
+        std::shared_ptr<MergeTreeBlockInputStream> readStream = std::make_shared<MergeTreeBlockInputStream>(
+                part_pair.second->storage, part_pair.second, part_pair.second->rows_count, 0, 0, singleColumn,
+                MarkRanges(1, MarkRange(0, part_pair.second->marks_count)),
+                  false, nullptr, "", true, 0, DBMS_DEFAULT_BUFFER_SIZE, false);
+
+        auto mypart = readStream->getDataParts()[0];
+        log("TRACE", "Replacing single column in ", mypart->getNameWithPrefix());
+
+        Block b = readAndReplace(readStream, replaced);
+        if (b.rows() > 0)
+        {
+            MergedBlockOutputStream out(merge_tree->getData(), part_pair.second->getFullPath(), b);
+            out.writeSingleColumn(b.getColumns()[0], part_pair.second->checksums);
+            out.flush();
+            context.dropMarkCache();
+        }
+        log("INFO", "Column replaced, row number: ", std::to_string(b.rows()));
+    }
+
+    log("INFO", "Occurences replaced in total ", std::to_string(replaced));
+
+    BlockIO res;
+    res.in = logstream;
+    return res;
+
+}
+
+Block InterpreterReplaceAll::readAndReplace(std::shared_ptr<MergeTreeBlockInputStream> readStream, size_t & replaced)
+{
+    Block b = readStream->read();
+    if (b.rows() == 0)
+        return b;
+
+    size_t pos = b.getPositionByName(column);
+    ColumnWithTypeAndName & oldcolumn = b.getByPosition(pos);
+    ColumnWithTypeAndName newcolumn = oldcolumn.cloneEmpty();
+    ColumnString * col = dynamic_cast<ColumnString *>(oldcolumn.column.get());
+    const char* newval = newvalue.c_str();
+    size_t newvallen = strlen(newval) + 1;
+
+    // Iterate through all rows of a block. It seems to be compilicated to vectorize this operation.
+    for(size_t row = 0; row < b.rows(); ++row)
+    {
+        StringRef s = col->getDataAtWithTerminatingZero(row);
+        if(!strcasecmp(s.data, oldvalue.c_str()))
+        {
+            newcolumn.column->insertDataWithTerminatingZero(newval, newvallen);
+            ++replaced;
+        }
+        else
+        {
+            newcolumn.column->insertFrom(*col, row);
+        }
+    }
+
+    //if at least one replacement found, remove the old column and add the new column to the block.
+    b.erase(pos);
+    b.insert(pos, newcolumn);
+
+    return b;
+}
+
+
+BlockIO InterpreterReplaceAll::fullBlockReplace(MergeTreeStreamPartMap& parts, StorageMergeTree * merge_tree, StorageReplicatedMergeTree * repl_merge_tree)
+{
     // Now create input streams that would read the whole parts. We want to read whole parts, because we must replace the whole
     // affected part with its copy with some modified values. We also want to read all columns, because the column to modify might be
     // the part of the primary key, so when it gets modified the sorting order will change and all rows must be written anew.
@@ -199,7 +294,7 @@ BlockIO InterpreterReplaceAll::execute()
     // Instead, must first read it once block for block to find out whether it contains the oldvalue
     // Then if it contains the old value, must read it block for block again to write a new part containing the new value
     MergeTreeStreams readStreams;
-    log("TRACE", "Searching for occurences", "");
+    log("TRACE", "Full block replace", "");
     for (auto part_pair : parts)
     {
         std::shared_ptr<MergeTreeBlockInputStream> searchStream = std::make_shared<MergeTreeBlockInputStream>(
@@ -217,8 +312,6 @@ BlockIO InterpreterReplaceAll::execute()
                     MarkRanges(1, MarkRange(0, part_pair.second->marks_count)),
                       false, nullptr, "", true, 0, DBMS_DEFAULT_BUFFER_SIZE, false)));
         }
-
-        //searchStream->finish();
     }
 
     size_t replaced = 0;
@@ -238,37 +331,9 @@ BlockIO InterpreterReplaceAll::execute()
             // For each block, search and replace the values in memory. Here can be some memory leaks.
             while(true)
             {
-                Block b = stream->read();
+                Block b = readAndReplace(stream, replaced);
                 if (b.rows() == 0)
                     break;
-
-                size_t pos = b.getPositionByName(column);
-                ColumnWithTypeAndName & oldcolumn = b.getByPosition(pos);
-                ColumnWithTypeAndName newcolumn = oldcolumn.cloneEmpty();
-                ColumnString * col = dynamic_cast<ColumnString *>(oldcolumn.column.get());
-                const char* newval = newvalue.c_str();
-                size_t newvallen = strlen(newval) + 1;
-
-                // Iterate through all rows of a block. It seems to be compilicated to vectorize this operation.
-                for(size_t row = 0; row < b.rows(); ++row)
-                {
-                    StringRef s = col->getDataAtWithTerminatingZero(row);
-                    if(!strcasecmp(s.data, oldvalue.c_str()))
-                    {
-                        //std::cout << s.data << " vs " << oldvalue.c_str() << " - replacing\n";
-                        newcolumn.column->insertDataWithTerminatingZero(newval, newvallen);
-                        ++replaced;
-                    }
-                    else
-                    {
-                        //std::cout << s.data << " vs " << oldvalue.c_str() << " - leaving\n";
-                        newcolumn.column->insertFrom(*col, row);
-                    }
-                }
-
-                //if at least one replacement found, remove the old column and add the new column to the block.
-                b.erase(pos);
-                b.insert(pos, newcolumn);
 
                 if (repl_merge_tree)
                 {
