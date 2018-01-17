@@ -78,6 +78,7 @@ struct MergeTreeDataPartChecksums
 
     String toString() const;
     static MergeTreeDataPartChecksums parse(const String & s);
+    String dump() const;
 };
 
 

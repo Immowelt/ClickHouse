@@ -29,6 +29,7 @@ public:
 private:
     MergeTreeData::DataPartPtr findPart(const String & name);
     MergeTreeData::DataPartPtr findShardedPart(const String & name, size_t shard_no);
+    void sendFile(String part_name, String filename, WriteBuffer & out);
 
 private:
     MergeTreeData & data;
@@ -52,7 +53,8 @@ public:
         const String & replica_path,
         const String & host,
         int port,
-        bool to_detached = false);
+        bool to_detached = false,
+        const String & single_column = "");
 
     /// You need to stop the data transfer.
     ActionBlocker blocker;
@@ -64,7 +66,8 @@ private:
         const String & host,
         int port,
         const String & shard_no,
-        bool to_detached);
+        bool to_detached,
+        const String & single_column);
 
 private:
     MergeTreeData & data;

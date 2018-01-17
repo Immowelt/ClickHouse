@@ -50,7 +50,7 @@ private:
     void fillParts(BlockInputStreamPtr parent, MergeTreeStreamPartMap & parts);
     bool streamContainsOldValue(std::shared_ptr<MergeTreeBlockInputStream> stream);
     BlockIO fullBlockReplace(MergeTreeStreamPartMap& parts, StorageMergeTree * merge_tree, StorageReplicatedMergeTree * repl_merge_tree);
-    BlockIO singleColumnReplace(MergeTreeStreamPartMap& parts, StorageMergeTree * merge_tree);
+    BlockIO singleColumnReplace(MergeTreeStreamPartMap& parts, StorageMergeTree * merge_tree, StorageReplicatedMergeTree * repl_merge_tree);
     Block readAndReplace(std::shared_ptr<MergeTreeBlockInputStream> readStream, size_t & replaced);
 
     std::unique_ptr<ExpressionAnalyzer> query_analyzer;

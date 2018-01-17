@@ -16,10 +16,12 @@
 #include <Storages/MergeTree/MergeTreeBlockOutputStream.h>
 #include <Storages/MergeTree/ReplicatedMergeTreeBlockOutputStream.h>
 #include <Storages/MergeTree/MergedBlockOutputStream.h>
+#include <Storages/MergeTree/ColumnFileHelper.h>
 #include <Storages/StorageMergeTree.h>
 #include <Storages/StorageReplicatedMergeTree.h>
 
 #include <Poco/File.h>
+
 
 namespace DB
 {
@@ -27,6 +29,8 @@ namespace DB
 namespace ErrorCodes
 {
     extern const int SYNTAX_ERROR;
+    extern const int UNEXPECTED_ZOOKEEPER_ERROR;
+    extern const int NO_ZOOKEEPER;
 }
 
 
@@ -192,25 +196,30 @@ BlockIO InterpreterReplaceAll::execute()
     }
 
     // Trying to use quick method working only on columns not in the primary key
-    if (merge_tree)
+    SortDescription primaryKey;
+    if (repl_merge_tree)
+        primaryKey = repl_merge_tree->getData().getSortDescription();
+    else
+        primaryKey = merge_tree->getData().getSortDescription();
+
+    bool found = false;
+    for(auto col : primaryKey)
     {
-        auto primaryKey = merge_tree->getData().getSortDescription();
-        bool found = false;
-        for(auto col : primaryKey)
+        if (col.column_name == column)
         {
-            if (col.column_name == column)
-            {
-                found = true;
-                break;
-            }
+            found = true;
+            break;
         }
-        if (!found)
-            return singleColumnReplace(parts, merge_tree);
     }
+    if (!found)
+        return singleColumnReplace(parts, merge_tree, repl_merge_tree);
+
     return fullBlockReplace(parts, merge_tree, repl_merge_tree);
 }
 
-BlockIO InterpreterReplaceAll::singleColumnReplace(MergeTreeStreamPartMap& parts, StorageMergeTree * merge_tree)
+
+
+BlockIO InterpreterReplaceAll::singleColumnReplace(MergeTreeStreamPartMap& parts, StorageMergeTree * merge_tree, StorageReplicatedMergeTree * repl_merge_tree)
 {
     log("TRACE", "Single column replace", "");
 
@@ -233,9 +242,27 @@ BlockIO InterpreterReplaceAll::singleColumnReplace(MergeTreeStreamPartMap& parts
         Block b = readAndReplace(readStream, replaced);
         if (b.rows() > 0)
         {
-            MergedBlockOutputStream out(merge_tree->getData(), part_pair.second->getFullPath(), b);
-            out.writeSingleColumn(b.getColumns()[0], part_pair.second->checksums);
-            out.flush();
+            String part_path(mypart->getFullPath());
+            auto column(b.getColumns()[0]);
+            if (merge_tree)
+            {
+                auto lock = merge_tree->lockStructure(true, "REPLACE ALL");
+                MergedBlockOutputStream out(merge_tree->getData(), part_path, b);
+                auto checksums = out.writeSingleColumn(column, mypart->checksums);
+                out.flush();
+                LOG_INFO(&Logger::get("GdprInterpreter"), "New checksums created." + checksums.dump());
+                _finalizeColumnReplacement(part_path, column.name);
+            }
+            else
+            {
+                auto lock = repl_merge_tree->lockStructure(true, "REPLACE ALL");
+                MergedBlockOutputStream out(repl_merge_tree->getData(), part_path, b);
+                auto checksums = out.writeSingleColumn(column, mypart->checksums);
+                out.flush();
+                LOG_INFO(&Logger::get("GdprInterpreter"), "New checksums created." + checksums.dump());
+                _finalizeColumnReplacement(part_path, column.name);
+                repl_merge_tree->replicateColumn(mypart, column.name, checksums);
+            }
             context.dropMarkCache();
         }
         log("INFO", "Column replaced, row number: ", std::to_string(b.rows()));
@@ -246,7 +273,6 @@ BlockIO InterpreterReplaceAll::singleColumnReplace(MergeTreeStreamPartMap& parts
     BlockIO res;
     res.in = logstream;
     return res;
-
 }
 
 Block InterpreterReplaceAll::readAndReplace(std::shared_ptr<MergeTreeBlockInputStream> readStream, size_t & replaced)

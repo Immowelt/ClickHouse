@@ -263,6 +263,23 @@ String MergeTreeDataPartChecksums::toString() const
     return out.str();
 }
 
+String MergeTreeDataPartChecksums::dump() const
+{
+    std::stringstream result;
+
+    result << "CHECKSUMS:\n";
+
+    for (const auto & it : files)
+    {
+        const String & name = it.first;
+        const Checksum & sum = it.second;
+
+        result << name << "\t" << sum.file_size << "\n";
+    }
+
+    return result.str();
+}
+
 MergeTreeDataPartChecksums MergeTreeDataPartChecksums::parse(const String & s)
 {
     ReadBufferFromString in(s);

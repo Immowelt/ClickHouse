@@ -162,6 +162,7 @@ public:
     MergeTreeData & getData() { return data; }
     const MergeTreeData & getData() const { return data; }
 
+    void replicateColumn(MergeTreeData::DataPartPtr part, String column_name, MergeTreeData::DataPart::Checksums checksums);
 
     /** For the system table replicas. */
     struct Status
@@ -384,6 +385,8 @@ private:
     void executeDropRange(const LogEntry & entry);
 
     void executeClearColumnInPartition(const LogEntry & entry);
+
+    void executeReplaceColumnInPartition(const LogEntry & entry);
 
     /** Updates the queue.
       */

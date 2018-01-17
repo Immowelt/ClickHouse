@@ -295,9 +295,11 @@ void IMergedBlockOutputStream::ColumnStream::sync()
     marks_file.sync();
 }
 
-void IMergedBlockOutputStream::ColumnStream::addToChecksums(MergeTreeData::DataPart::Checksums & checksums)
+void IMergedBlockOutputStream::ColumnStream::addToChecksums(MergeTreeData::DataPart::Checksums & checksums, String columnname)
 {
     String name = escaped_column_name;
+    if (!columnname.empty())
+        name = escapeForFileName(columnname);
 
     checksums.files[name + data_file_extension].is_compressed = true;
     checksums.files[name + data_file_extension].uncompressed_size = compressed.count();
@@ -380,38 +382,26 @@ void MergedBlockOutputStream::write(const Block & block)
     writeImpl(block, nullptr);
 }
 
-void _rename(String from, String to)
+
+MergeTreeData::DataPart::Checksums MergedBlockOutputStream::writeSingleColumn(const ColumnWithTypeAndName column, MergeTreeData::DataPart::Checksums checksums)
 {
-    Poco::File from_file(from);
-    Poco::File to_file(to);
-    if (to_file.exists())
-    {
-        to_file.remove(true);
-    }
+    String tmpname = "_new_" + column.name;
 
-    from_file.setLastModified(Poco::Timestamp::fromEpochTime(time(nullptr)));
-    from_file.renameTo(to);
-}
-
-void MergedBlockOutputStream::writeSingleColumn(const ColumnWithTypeAndName column, MergeTreeData::DataPart::Checksums checksums)
-{
-    Poco::Timestamp ts;
-    String _ts = std::to_string(ts.epochMicroseconds());
-    _rename(part_path + "/" + column.name + ".bin", part_path + "/_backup_" + _ts + "_" + column.name + ".bin");
-    _rename(part_path + "/" + column.name + ".mrk", part_path + "/_backup_" + _ts + "_" + column.name + ".mrk");
-
-    addStream(part_path, columns_list.front().name, *(columns_list.front().type), 0, 0, "", false);
+    addStream(part_path, tmpname, *(column.type), 0, 0, "", false);
 
     OffsetColumns dummy;
-    writeData(column.name, column.type, column.column, dummy, 0, false);
-    column_streams[column.name]->finalize();
-    column_streams[column.name]->addToChecksums(checksums);
+    writeData(tmpname, column.type, column.column, dummy, 0, false);
+    column_streams[tmpname]->finalize();
+    MergeTreeData::DataPart::Checksums result(checksums);
+    column_streams[tmpname]->addToChecksums(result, column.name);
 
     {
         /// Update checksums.
         WriteBufferFromFile out(part_path + "checksums.txt", 4096);
-        checksums.write(out);
+        result.write(out);
     }
+
+    return result;
 }
 
 

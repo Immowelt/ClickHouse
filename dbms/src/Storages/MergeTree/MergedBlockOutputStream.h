@@ -57,7 +57,7 @@ protected:
 
         void sync();
 
-        void addToChecksums(MergeTreeData::DataPart::Checksums & checksums);
+        void addToChecksums(MergeTreeData::DataPart::Checksums & checksums, String columnname = "");
     };
 
     using ColumnStreams = std::map<String, std::unique_ptr<ColumnStream>>;
@@ -138,7 +138,7 @@ public:
     /// How many rows are already written.
     size_t getRowsCount() const { return rows_count; }
 
-    void writeSingleColumn(const ColumnWithTypeAndName column, MergeTreeData::DataPart::Checksums checksums);
+    MergeTreeData::DataPart::Checksums writeSingleColumn(const ColumnWithTypeAndName column, MergeTreeData::DataPart::Checksums checksums);
 
 private:
     void init();
