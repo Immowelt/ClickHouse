@@ -233,3 +233,8 @@ node_modules
 public
 website/docs
 /.metadata/
+
+.cproject
+.project
+.settings
+
