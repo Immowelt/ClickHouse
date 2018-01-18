@@ -25,6 +25,9 @@ target_link_libraries (clickhouse-local-lib clickhouse-server-lib clickhouse_fun
 add_library (clickhouse-extract-from-config-lib ${SPLIT_SHARED} ExtractFromConfig.cpp)
 target_link_libraries (clickhouse-extract-from-config-lib clickhouse_common_configprocessor clickhouse_common_io ${Boost_PROGRAM_OPTIONS_LIBRARY})
 
+add_library(clickhouse-gdpr-lib GDPR.cpp)
+target_link_libraries(clickhouse-gdpr-lib  clickhouse-server-lib clickhouse_functions clickhouse_aggregate_functions clickhouse_table_functions)
+
 add_library (clickhouse-client-lib Client.cpp)
 target_link_libraries (clickhouse-client-lib clickhouse_functions clickhouse_aggregate_functions clickhouse_table_functions ${LINE_EDITING_LIBS} ${Boost_PROGRAM_OPTIONS_LIBRARY})
 target_include_directories (clickhouse-client-lib PRIVATE ${READLINE_INCLUDE_DIR})
@@ -56,6 +59,8 @@ if (CLICKHOUSE_SPLIT_BINARY)
     target_link_libraries (clickhouse-client clickhouse-client-lib)
     add_executable (clickhouse-local clickhouse-local.cpp)
     target_link_libraries (clickhouse-local clickhouse-local-lib)
+    add_executable (clickhouse-gdpr GDPR.cpp)
+    target_link_libraries (clickhouse-gdpr clickhouse-gdpr-lib)
     add_executable (clickhouse-benchmark clickhouse-benchmark.cpp)
     target_link_libraries (clickhouse-benchmark clickhouse-benchmark-lib clickhouse_aggregate_functions)
     add_executable (clickhouse-performance-test clickhouse-performance-test.cpp)
@@ -95,6 +100,7 @@ else ()
         clickhouse-server-lib
         clickhouse-client-lib
         clickhouse-local-lib
+        clickhouse-gdpr-lib
         clickhouse-benchmark-lib
         clickhouse-performance-test-lib
         clickhouse-extract-from-config-lib
