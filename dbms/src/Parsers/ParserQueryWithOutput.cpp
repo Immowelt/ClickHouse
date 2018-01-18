@@ -10,6 +10,7 @@
 #include <Parsers/ParserAlterQuery.h>
 #include <Parsers/ParserDropQuery.h>
 #include <Parsers/ParserKillQueryQuery.h>
+#include <Parsers/ParserReplaceAllQuery.h>
 
 
 namespace DB
@@ -28,6 +29,7 @@ bool ParserQueryWithOutput::parseImpl(Pos & pos, ASTPtr & node, Expected & expec
     ParserDropQuery drop_p;
     ParserCheckQuery check_p;
     ParserKillQueryQuery kill_query_p;
+    ParserReplaceAllQuery replace_all_p;
 
     ASTPtr query;
 
@@ -41,7 +43,8 @@ bool ParserQueryWithOutput::parseImpl(Pos & pos, ASTPtr & node, Expected & expec
         || rename_p.parse(pos, query, expected)
         || drop_p.parse(pos, query, expected)
         || check_p.parse(pos, query, expected)
-        || kill_query_p.parse(pos, query, expected);
+        || kill_query_p.parse(pos, query, expected)
+        || replace_all_p.parse(pos, query, expected);
 
     if (!parsed)
         return false;

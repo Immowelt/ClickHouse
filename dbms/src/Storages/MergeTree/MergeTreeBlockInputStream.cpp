@@ -62,6 +62,13 @@ MergeTreeBlockInputStream::MergeTreeBlockInputStream(
     setTotalRowsApprox(total_rows);
 }
 
+std::vector<MergeTreeData::DataPartPtr> MergeTreeBlockInputStream::getDataParts()
+{
+    std::vector<MergeTreeData::DataPartPtr> res;
+    res.push_back(data_part);
+    return res;
+}
+
 String MergeTreeBlockInputStream::getID() const
 {
     std::stringstream res;
@@ -102,6 +109,7 @@ try
     if (prewhere_actions)
     {
         pre_column_names = prewhere_actions->getRequiredColumns();
+
 
         if (pre_column_names.empty())
             pre_column_names.push_back(column_names[0]);

@@ -6,6 +6,7 @@
 #include <Common/typeid_cast.h>
 #include <Common/MemoryTracker.h>
 #include <Poco/File.h>
+#include <Poco/Timestamp.h>
 
 
 namespace DB
@@ -195,9 +196,11 @@ void IMergedBlockOutputStream::ColumnStream::sync()
     marks_file.sync();
 }
 
-void IMergedBlockOutputStream::ColumnStream::addToChecksums(MergeTreeData::DataPart::Checksums & checksums)
+void IMergedBlockOutputStream::ColumnStream::addToChecksums(MergeTreeData::DataPart::Checksums & checksums, String columnname)
 {
     String name = escaped_column_name;
+    if (!columnname.empty())
+        name = escapeForFileName(columnname);
 
     checksums.files[name + data_file_extension].is_compressed = true;
     checksums.files[name + data_file_extension].uncompressed_size = compressed.count();
@@ -227,6 +230,20 @@ MergedBlockOutputStream::MergedBlockOutputStream(
     for (const auto & it : columns_list)
         addStreams(part_path, it.name, *it.type, 0, false);
 }
+
+MergedBlockOutputStream::MergedBlockOutputStream(
+    MergeTreeData & storage_,
+    String part_path_,
+    Block blockWithSingleColumn) : IMergedBlockOutputStream(
+            storage_, storage_.context.getSettings().min_compress_block_size,
+            storage_.context.getSettings().max_compress_block_size, storage_.context.chooseCompressionSettings(0, 0),
+            storage_.context.getSettings().min_bytes_to_use_direct_io), part_path(part_path_)
+{
+    //No init() or addstream, because that would reset the current column file and the primary.idx
+    //See writeSingleColumn()
+    columns_list = blockWithSingleColumn.getNamesAndTypesList();
+}
+
 
 MergedBlockOutputStream::MergedBlockOutputStream(
     MergeTreeData & storage_,
@@ -265,6 +282,29 @@ void MergedBlockOutputStream::write(const Block & block)
 {
     writeImpl(block, nullptr);
 }
+
+
+MergeTreeData::DataPart::Checksums MergedBlockOutputStream::writeSingleColumn(const ColumnWithTypeAndName column, MergeTreeData::DataPart::Checksums checksums)
+{
+    String tmpname = "_new_" + column.name;
+
+    addStreams(part_path, tmpname, *(column.type), 0, false);
+
+    OffsetColumns dummy;
+    writeData(tmpname, *column.type, *column.column, dummy, false);
+    column_streams[tmpname]->finalize();
+    MergeTreeData::DataPart::Checksums result(checksums);
+    column_streams[tmpname]->addToChecksums(result, column.name);
+
+    {
+        /// Update checksums.
+        WriteBufferFromFile out(part_path + "checksums.txt", 4096);
+        result.write(out);
+    }
+
+    return result;
+}
+
 
 /** If the data is not sorted, but we pre-calculated the permutation, after which they will be sorted.
     * This method is used to save RAM, since you do not need to keep two blocks at once - the source and the sorted.

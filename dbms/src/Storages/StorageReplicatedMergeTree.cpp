@@ -10,6 +10,7 @@
 #include <Storages/MergeTree/ReplicatedMergeTreeQuorumEntry.h>
 #include <Storages/MergeTree/MergeList.h>
 #include <Storages/MergeTree/ReplicatedMergeTreeAddress.h>
+#include <Storages/MergeTree/ColumnFileHelper.h>
 
 #include <Databases/IDatabase.h>
 
@@ -95,6 +96,8 @@ namespace ErrorCodes
     extern const int TOO_MUCH_FETCHES;
     extern const int BAD_DATA_PART_NAME;
     extern const int PART_IS_TEMPORARILY_LOCKED;
+    extern const int UNEXPECTED_ZOOKEEPER_ERROR;
+    extern const int UNKNOWN_STATUS_OF_INSERT;
 }
 
 
@@ -947,6 +950,12 @@ bool StorageReplicatedMergeTree::executeLogEntry(const LogEntry & entry)
         return true;
     }
 
+    if (entry.type == LogEntry::REPLACE_COLUMN)
+    {
+        executeReplaceColumnInPartition(entry);
+        return true;
+    }
+
     if (entry.type == LogEntry::GET_PART ||
         entry.type == LogEntry::MERGE_PARTS)
     {
@@ -1468,6 +1477,59 @@ void StorageReplicatedMergeTree::executeClearColumnInPartition(const LogEntry & 
     LOG_DEBUG(log, "Cleared column " << entry.column_name << " in " << modified_parts << " parts");
 
     /// Recalculate columns size (not only for the modified column)
+    data.recalculateColumnSizes();
+}
+
+
+
+void StorageReplicatedMergeTree::executeReplaceColumnInPartition(const LogEntry & entry)
+{
+    if (replica_name == entry.source_replica)
+    {
+        LOG_INFO(log, "Replace column: I'm " + replica_name + ", they are " + entry.source_replica + ", ignoring.");
+        return;
+    }
+    else
+    {
+        LOG_INFO(log, "Replace column: I'm " + replica_name + ", they are " + entry.source_replica + ", replacing column " << entry.column_name << " in part " << entry.new_part_name);
+    }
+
+    queue.disableMergesAndFetchesInRange(entry);
+
+    auto lock = lockStructure(true, __PRETTY_FUNCTION__);
+
+    /// Fetch column
+    ReplicatedMergeTreeAddress address(getZooKeeper()->get(replica_path + "/host"));
+    auto timeouts = ConnectionTimeouts::getHTTPTimeouts(context.getSettingsRef());
+    fetcher.fetchPart(entry.new_part_name, zookeeper_path + "/replicas/" + entry.source_replica, address.host, address.replication_port, timeouts, false, entry.column_name);
+    _finalizeColumnReplacement(data.getFullPath() + entry.new_part_name + "/", entry.column_name);
+
+    /// Update checksums.
+    auto zookeeper = getZooKeeper();
+    String replica_checksum_str;
+    if (!zookeeper->tryGet(zookeeper_path + "/replicas/" + entry.source_replica + "/parts/" + entry.new_part_name + "/checksums", replica_checksum_str))
+    {
+        LOG_WARNING(log, "Cannot get checksums from " << (zookeeper_path + "/replicas/" + entry.source_replica + "/parts/" + entry.new_part_name + "/checksums"));
+        return;
+    }
+    auto checksums = MergeTreeDataPartChecksums::parse(replica_checksum_str);
+    {
+        LOG_INFO(log, "Writing new checksums into " + data.getFullPath() + entry.new_part_name + "/checksums.txt");
+        Poco::File f(data.getFullPath() + entry.new_part_name + "/checksums.txt");
+        if (f.exists())
+        {
+            f.remove(false);
+            LOG_INFO(log, "Old checksums.txt removed");
+        }
+        WriteBufferFromFile out(data.getFullPath() + entry.new_part_name + "/checksums.txt", 4096);
+        checksums.write(out);
+        LOG_INFO(log, "Checksums written.\n" << checksums.dump());
+    }
+    zookeeper->set(replica_path + "/parts/" + entry.new_part_name + "/checksums", replica_checksum_str, -1);
+
+    LOG_DEBUG(log, "Replaced column " << entry.column_name << " in " << entry.new_part_name << " parts");
+
+    context.dropMarkCache();
     data.recalculateColumnSizes();
 }
 
@@ -2653,6 +2715,29 @@ void StorageReplicatedMergeTree::clearColumnInPartition(
     }
 }
 
+void StorageReplicatedMergeTree::dropSinglePart(String partname, bool detach, const Context & context)
+{
+    LogEntry entry;
+    entry.type = LogEntry::DROP_RANGE;
+    entry.source_replica = replica_name;
+    entry.new_part_name = partname;
+    entry.detach = detach;
+    entry.create_time = time(nullptr);
+
+    String log_znode_path = getZooKeeper()->create(zookeeper_path + "/log/log-", entry.toString(), zkutil::CreateMode::PersistentSequential);
+    entry.znode_name = log_znode_path.substr(log_znode_path.find_last_of('/') + 1);
+
+    /// If necessary, wait until the operation is performed on itself or on all replicas.
+    if (context.getSettingsRef().replication_alter_partitions_sync != 0)
+    {
+        if (context.getSettingsRef().replication_alter_partitions_sync == 1)
+            waitForReplicaToProcessLogEntry(replica_name, entry);
+        else
+            waitForAllReplicasToProcessLogEntry(entry);
+    }
+
+}
+
 void StorageReplicatedMergeTree::dropPartition(const ASTPtr & query, const ASTPtr & partition, bool detach, const Context & context)
 {
     assertNotReadonly();
@@ -3382,6 +3467,59 @@ void StorageReplicatedMergeTree::fetchPartition(const ASTPtr & partition, const 
 void StorageReplicatedMergeTree::freezePartition(const ASTPtr & partition, const String & with_name, const Context & context)
 {
     data.freezePartition(partition, with_name, context);
+}
+
+
+void StorageReplicatedMergeTree::replicateColumn(MergeTreeData::DataPartPtr part, String column_name, MergeTreeData::DataPart::Checksums checksums)
+{
+    auto zookeeper = getZooKeeper();
+
+    if (!zookeeper)
+        throw Exception("No ZooKeeper session.", ErrorCodes::NO_ZOOKEEPER);
+
+    if (zookeeper->expired())
+        throw Exception("ZooKeeper session has been expired.", ErrorCodes::NO_ZOOKEEPER);
+
+    StorageReplicatedMergeTree::LogEntry log_entry;
+    log_entry.type = StorageReplicatedMergeTree::LogEntry::REPLACE_COLUMN;
+    log_entry.create_time = time(nullptr);
+    log_entry.source_replica = replica_name;
+    log_entry.new_part_name = part->getNameWithPrefix();
+    log_entry.column_name = column_name;
+    log_entry.quorum = 0;
+    log_entry.block_id = "";
+
+    zkutil::Ops ops;
+    auto acl = zookeeper->getDefaultACL();
+
+    ops.emplace_back(std::make_unique<zkutil::Op::Create>(
+        zookeeper_path + "/log/log-",
+        log_entry.toString(),
+        acl,
+        zkutil::CreateMode::PersistentSequential));
+    ops.emplace_back(std::make_unique<zkutil::Op::SetData>(
+        replica_path + "/parts/" + part->getNameWithPrefix() + "/checksums",
+        checksums.toString(), -1));
+
+    LOG_INFO(log, "Checksums to Zookeeper.\n" << checksums.dump());
+
+    try
+    {
+        auto code = zookeeper->tryMulti(ops);
+        if (code == ZOK)
+        {
+            LOG_TRACE(log, "Add to replication log " << part->getNameWithPrefix() << " column " + column_name);
+        }
+        else
+        {
+            throw Exception("Unexpected ZNODEEXISTS while adding log " + log_entry.toString() +  ": "
+                + zkutil::ZooKeeper::error2string(code), ErrorCodes::UNEXPECTED_ZOOKEEPER_ERROR);
+        }
+    }
+    catch (const zkutil::KeeperException & e)
+    {
+        throw Exception("Unknown status, client must retry. Reason: " + e.displayText(), ErrorCodes::UNKNOWN_STATUS_OF_INSERT);
+    }
 }
 
 

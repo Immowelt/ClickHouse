@@ -32,6 +32,8 @@ public:
 
     String getID() const override;
 
+    std::vector<MergeTreeData::DataPartPtr> getDataParts() override;
+
     ~MergeTreeThreadBlockInputStream() override;
 
 protected:

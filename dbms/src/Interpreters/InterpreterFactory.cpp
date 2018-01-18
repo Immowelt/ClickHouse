@@ -31,7 +31,9 @@
 #include <Interpreters/InterpreterShowTablesQuery.h>
 #include <Interpreters/InterpreterSystemQuery.h>
 #include <Interpreters/InterpreterUseQuery.h>
-
+#include <Interpreters/InterpreterFactory.h>
+#include "Interpreters/InterpreterReplaceAll.h"
+#include <Common/typeid_cast.h>
 #include <Parsers/ASTSystemQuery.h>
 #include <Common/typeid_cast.h>
 
@@ -129,6 +131,10 @@ std::unique_ptr<IInterpreter> InterpreterFactory::get(ASTPtr & query, Context & 
     {
         throwIfReadOnly(context);
         return std::make_unique<InterpreterSystemQuery>(query, context);
+    }
+    else if (typeid_cast<ASTReplaceAllQuery *>(query.get()))
+    {
+        return std::make_unique<InterpreterReplaceAll>(query, context);
     }
     else
         throw Exception("Unknown type of query: " + query->getID(), ErrorCodes::UNKNOWN_TYPE_OF_QUERY);

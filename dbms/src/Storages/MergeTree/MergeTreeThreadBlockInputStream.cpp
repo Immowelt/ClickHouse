@@ -46,6 +46,11 @@ String MergeTreeThreadBlockInputStream::getID() const
     return res.str();
 }
 
+std::vector<MergeTreeData::DataPartPtr> MergeTreeThreadBlockInputStream::getDataParts()
+{
+    return pool->getDataParts();
+}
+
 
 /// Requests read task from MergeTreeReadPool and signals whether it got one
 bool MergeTreeThreadBlockInputStream::getNewTask()

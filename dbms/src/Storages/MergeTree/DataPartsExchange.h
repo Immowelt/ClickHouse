@@ -29,6 +29,8 @@ public:
 
 private:
     MergeTreeData::DataPartPtr findPart(const String & name);
+    MergeTreeData::DataPartPtr findShardedPart(const String & name, size_t shard_no);
+    void sendFile(String part_name, String filename, WriteBuffer & out);
 
 private:
     MergeTreeData & data;
@@ -53,7 +55,8 @@ public:
         const String & host,
         int port,
         const ConnectionTimeouts & timeouts,
-        bool to_detached = false);
+        bool to_detached = false,
+        const String & single_column = "");
 
     /// You need to stop the data transfer.
     ActionBlocker blocker;

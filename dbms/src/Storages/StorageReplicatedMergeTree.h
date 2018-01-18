@@ -112,6 +112,7 @@ public:
 
     void clearColumnInPartition(const ASTPtr & partition, const Field & column_name, const Context & context) override;
     void dropPartition(const ASTPtr & query, const ASTPtr & partition, bool detach, const Context & context) override;
+    void dropSinglePart(String partname, bool detach, const Context & context);
     void attachPartition(const ASTPtr & partition, bool part, const Context & context) override;
     void fetchPartition(const ASTPtr & partition, const String & from, const Context & context) override;
     void freezePartition(const ASTPtr & partition, const String & with_name, const Context & context) override;
@@ -129,6 +130,7 @@ public:
     MergeTreeData & getData() { return data; }
     const MergeTreeData & getData() const { return data; }
 
+    void replicateColumn(MergeTreeData::DataPartPtr part, String column_name, MergeTreeData::DataPart::Checksums checksums);
 
     /** For the system table replicas. */
     struct Status
@@ -338,6 +340,8 @@ private:
     void executeDropRange(const LogEntry & entry);
 
     void executeClearColumnInPartition(const LogEntry & entry);
+
+    void executeReplaceColumnInPartition(const LogEntry & entry);
 
     /** Updates the queue.
       */
