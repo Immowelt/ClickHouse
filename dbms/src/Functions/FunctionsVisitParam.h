@@ -84,6 +84,68 @@ struct ExtractBool
 };
 
 
+struct ExtractJsonAny
+{
+    static constexpr size_t bytes_on_stack = 64;
+    using ExpectChars = PODArray<char, bytes_on_stack, AllocatorWithStackMemory<Allocator<false>, bytes_on_stack>>;
+
+    static void extract(const UInt8 * pos, const UInt8 * end, ColumnString::Chars & res_data)
+    {
+        ExpectChars expects_end;
+        UInt8 current_expect_end = 0;
+
+        for (auto extract_begin = pos; pos != end; ++pos)
+        {
+            if (*pos == current_expect_end)
+            {
+                expects_end.pop_back();
+                current_expect_end = expects_end.empty() ? 0 : expects_end.back();
+            }
+            else
+            {
+                switch (*pos)
+                {
+                    case '[':
+                        current_expect_end = ']';
+                        expects_end.push_back(current_expect_end);
+                        break;
+                    case '{':
+                        current_expect_end = '}';
+                        expects_end.push_back(current_expect_end);
+                        break;
+                    case '"' :
+                        current_expect_end = '"';
+                        expects_end.push_back(current_expect_end);
+                        break;
+                    case '\\':
+                        /// skip backslash
+                        if (pos + 1 < end && pos[1] == '"')
+                            pos++;
+                        break;
+                    default:
+                        if (!current_expect_end && (*pos == ',' || *pos == '}'))
+                        {
+                            auto payload_begin = extract_begin;
+                            auto payload_last = pos - 1;
+                            while (payload_begin < payload_last && *payload_begin == ' ')
+                                ++payload_begin;
+                            while (payload_last > payload_begin && *payload_last == ' ')
+                                --payload_last;
+                            if (payload_begin < payload_last && *payload_begin == '"' && *payload_last == '"')
+                            {
+                                ++payload_begin;
+                                --payload_last;
+                            }
+                            res_data.insert(payload_begin, payload_last + 1);
+                            return;
+                        }
+                }
+            }
+        }
+    }
+};
+
+
 struct ExtractRaw
 {
     static constexpr size_t bytes_on_stack = 64;
@@ -278,6 +340,64 @@ struct ExtractParamToStringImpl
             res_offsets[i] = res_data.size();
             ++i;
         }
+    }
+};
+
+
+struct ExtractJsonAnyWithPathSupportImpl
+{
+    static void vector(const ColumnString::Chars & data, const ColumnString::Offsets & offsets,
+                       std::string needle,
+                       ColumnString::Chars & res_data, ColumnString::Offsets & res_offsets)
+    {
+        std::size_t dot_pos = needle.find(".");
+        std::size_t prev_pos = 0;
+
+        if (std::string::npos == dot_pos)
+        {
+            ExtractParamToStringImpl<ExtractJsonAny>::vector(
+                data,
+                offsets,
+                needle,
+                res_data,
+                res_offsets);
+            return;
+        }
+
+        std::shared_ptr<ColumnString::Chars> temporary_input_data;
+        std::shared_ptr<ColumnString::Offsets> temporary_input_offsets;
+
+        while (std::string::npos != dot_pos)
+        {
+            auto temporary_res_data = std::make_shared<ColumnString::Chars>();
+            auto temporary_res_offsets = std::make_shared<ColumnString::Offsets>();
+            if (0 == prev_pos)
+                ExtractParamToStringImpl<ExtractJsonAny>::vector(
+                    data,
+                    offsets,
+                    needle.substr(prev_pos, dot_pos - prev_pos),
+                    *temporary_res_data,
+                    *temporary_res_offsets);
+            else
+                ExtractParamToStringImpl<ExtractJsonAny>::vector(
+                        *temporary_input_data,
+                        *temporary_input_offsets,
+                        needle.substr(prev_pos, dot_pos - prev_pos),
+                        *temporary_res_data,
+                        *temporary_res_offsets);
+
+            temporary_input_data = temporary_res_data;
+            temporary_input_offsets = temporary_res_offsets;
+
+            prev_pos = dot_pos + 1;
+            dot_pos = needle.find(".", prev_pos);
+        }
+        ExtractParamToStringImpl<ExtractJsonAny>::vector(
+                *temporary_input_data,
+                *temporary_input_offsets,
+                needle.substr(prev_pos, std::string::npos),
+                res_data,
+                res_offsets);
     }
 };
 
