@@ -17,6 +17,12 @@
 #include <IO/ReadHelpers.h>
 
 
+
+//#include <Poco/Logger.h>
+//#include <common/logger_useful.h>
+//LOG_TRACE(&Logger::get("maxim"), "tmp_resoffsets " << temporary_res_offsets.size());
+
+
 /** Functions for retrieving "visit parameters".
  * Visit parameters in Yandex.Metrika are a special kind of JSONs.
  * These functions are applicable to almost any JSONs.
@@ -402,6 +408,199 @@ struct ExtractJsonAnyWithPathSupportImpl
     }
 };
 
+template <typename Name>
+class FunctionJsonAllWithPartSupport : public IFunction
+{
+    using Pos = const char *;
+    static constexpr size_t bytes_on_stack = 64;
+    using ExpectChars = PODArray<char, bytes_on_stack, AllocatorWithStackMemory<Allocator<false>, bytes_on_stack>>;
+
+public:
+    static constexpr auto name = Name::name;
+    static FunctionPtr create(const Context &) { return std::make_shared<FunctionJsonAllWithPartSupport>(); }
+
+    String getName() const override
+    {
+        return name;
+    }
+
+    size_t getNumberOfArguments() const override { return 2; }
+
+    DataTypePtr getReturnTypeImpl(const DataTypes & arguments) const override
+    {
+        if (!isStringOrFixedString(arguments[0]))
+            throw Exception("Illegal type " + arguments[0]->getName() + " of first argument of function " + getName() + ". Must be String.",
+                ErrorCodes::ILLEGAL_TYPE_OF_ARGUMENT);
+
+        if (!isStringOrFixedString(arguments[1]))
+            throw Exception("Illegal type " + arguments[1]->getName() + " of second argument of function " + getName() + ". Must be String.",
+                ErrorCodes::ILLEGAL_TYPE_OF_ARGUMENT);
+
+        return std::make_shared<DataTypeArray>(std::make_shared<DataTypeString>());
+    }
+
+    size_t tokenizeArray(
+            Pos begin,
+            Pos last,
+            ColumnString::Chars & res_strings_chars,
+            ColumnString::Offsets & res_strings_offsets,
+            ColumnString::Offset & current_dst_strings_offset)
+    {
+        ExpectChars expects_end;
+        UInt8 current_expect_end = 0;
+        size_t num_elements = 0;
+        Pos pos;
+
+        for (pos = begin; pos < last; ++pos)
+        {
+            if (*pos == current_expect_end)
+            {
+                expects_end.pop_back();
+                current_expect_end = expects_end.empty() ? 0 : expects_end.back();
+            }
+            else
+            {
+                switch (*pos)
+                {
+                    case '[':
+                        current_expect_end = ']';
+                        expects_end.push_back(current_expect_end);
+                        break;
+                    case '{':
+                        current_expect_end = '}';
+                        expects_end.push_back(current_expect_end);
+                        break;
+                    case '"' :
+                        current_expect_end = '"';
+                        expects_end.push_back(current_expect_end);
+                        break;
+                    case '\\':
+                        /// skip backslash
+                        if (pos + 1 < last && pos[1] == '"')
+                            pos++;
+                        break;
+                    default:
+                        if (!current_expect_end && *pos == ',')
+                        {
+                            insertResultElement(begin, pos - 1, res_strings_chars, res_strings_offsets, current_dst_strings_offset);
+                            ++num_elements;
+                            begin = pos + 1;
+                        }
+                }
+            }
+        }
+
+        if (pos >= begin)
+        {
+            insertResultElement(begin, pos, res_strings_chars, res_strings_offsets, current_dst_strings_offset);
+            ++num_elements;
+        }
+
+        return num_elements;
+    }
+
+    void insertResultElement(
+            Pos begin,
+            Pos last,
+            ColumnString::Chars & res_strings_chars,
+            ColumnString::Offsets & res_strings_offsets,
+            ColumnString::Offset & current_dst_strings_offset)
+    {
+        size_t bytes_to_copy = last - begin + 1;
+        memcpySmallAllowReadWriteOverflow15(&res_strings_chars[current_dst_strings_offset], begin, bytes_to_copy);
+        current_dst_strings_offset += bytes_to_copy;
+        res_strings_chars[current_dst_strings_offset] = '\0';
+        ++current_dst_strings_offset;
+        res_strings_offsets.push_back(current_dst_strings_offset);
+    }
+
+    void parseArrays(
+            const ColumnString::Chars & data,
+            const ColumnString::Offsets & offsets,
+            ColumnArray::Offsets & res_offsets,
+            ColumnString::Chars & res_strings_chars,
+            ColumnString::Offsets & res_strings_offsets)
+    {
+        res_offsets.reserve(offsets.size());
+        res_strings_offsets.reserve(offsets.size() * 5);    /// Constant 5 - at random.
+        res_strings_chars.reserve(data.size());
+
+        ColumnString::Offset current_src_offset = 0;
+        ColumnArray::Offset current_dst_offset = 0;
+        ColumnString::Offset current_dst_strings_offset = 0;
+        for (size_t i = 0; i < offsets.size(); ++i)
+        {
+            Pos begin = reinterpret_cast<Pos>(&data[current_src_offset]);
+            current_src_offset = offsets[i];
+            Pos end = reinterpret_cast<Pos>(&data[current_src_offset]) - 1;
+
+            // end points to the \0 marker of the end of the string,
+            // last points to the actual last char of the current record.
+            Pos last = end - 1;
+
+            while (' ' == *begin && begin < end)
+                ++begin;
+
+            while (' ' == *last && begin < last)
+                --last;
+
+            if ('[' == *begin && ']' == *last)
+            {
+                current_dst_offset += tokenizeArray(begin + 1, last - 1, res_strings_chars, res_strings_offsets, current_dst_strings_offset);
+            }
+            else
+            {
+                insertResultElement(begin, last, res_strings_chars, res_strings_offsets, current_dst_strings_offset);
+                ++current_dst_offset;
+            }
+            res_offsets.push_back(current_dst_offset);
+        }
+    }
+
+    void executeImpl(Block & block, const ColumnNumbers & arguments, size_t result, size_t /*input_rows_count*/) override
+    {
+        size_t json_arg = arguments[0];
+        size_t path_arg = arguments[1];
+
+        if (!block.getByPosition(path_arg).column->isColumnConst())
+            throw Exception("jsonAll currently supports only constant expressions as second argument", ErrorCodes::ILLEGAL_COLUMN);
+
+        const ColumnConst * needle_str =
+                checkAndGetColumnConstStringOrFixedString(block.getByPosition(path_arg).column.get());
+        String needle = needle_str->getValue<String>();
+
+        const auto maybe_const = block.getByPosition(json_arg).column.get()->convertToFullColumnIfConst();
+        const ColumnString * json_str = checkAndGetColumn<ColumnString>(maybe_const.get());
+
+        if (json_str)
+        {
+            const ColumnString::Chars & json_chars = json_str->getChars();
+            const ColumnString::Offsets & json_offsets = json_str->getOffsets();
+
+            auto temporary_res = ColumnString::create();
+            ColumnString::Chars & temporary_res_chars = temporary_res->getChars();
+            ColumnArray::Offsets & temporary_res_offsets = temporary_res->getOffsets();
+
+            ExtractJsonAnyWithPathSupportImpl::vector(json_chars, json_offsets, needle, temporary_res_chars, temporary_res_offsets);
+
+            auto col_res = ColumnArray::create(ColumnString::create());
+            ColumnString & res_strings = typeid_cast<ColumnString &>(col_res->getData());
+            ColumnArray::Offsets & res_offsets = col_res->getOffsets();
+            ColumnString::Chars & res_strings_chars = res_strings.getChars();
+            ColumnString::Offsets & res_strings_offsets = res_strings.getOffsets();
+
+            parseArrays(temporary_res_chars, temporary_res_offsets, res_offsets, res_strings_chars, res_strings_offsets);
+
+            block.getByPosition(result).column = std::move(col_res);
+        }
+        else
+            throw Exception("Illegal columns " + block.getByPosition(0).column->getName()
+                    + ", " + block.getByPosition(1).column->getName()
+                    + " of arguments of function " + getName(),
+                ErrorCodes::ILLEGAL_COLUMN);
+    }
+};
 
 
 }
+

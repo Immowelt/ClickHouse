@@ -14,6 +14,7 @@ struct NameVisitParamExtractBool   { static constexpr auto name = "visitParamExt
 struct NameVisitParamExtractRaw    { static constexpr auto name = "visitParamExtractRaw"; };
 struct NameVisitParamExtractString { static constexpr auto name = "visitParamExtractString"; };
 struct NameJsonAny                 { static constexpr auto name = "jsonAny"; };
+struct NameJsonAll                 { static constexpr auto name = "jsonAll"; };
 
 
 using FunctionVisitParamHas = FunctionsStringSearch<ExtractParamImpl<HasParam>, NameVisitParamHas>;
@@ -24,6 +25,7 @@ using FunctionVisitParamExtractBool = FunctionsStringSearch<ExtractParamImpl<Ext
 using FunctionVisitParamExtractRaw = FunctionsStringSearchToString<ExtractParamToStringImpl<ExtractRaw>, NameVisitParamExtractRaw>;
 using FunctionVisitParamExtractString = FunctionsStringSearchToString<ExtractParamToStringImpl<ExtractString>, NameVisitParamExtractString>;
 using FunctionJsonAny = FunctionsStringSearchToString<ExtractJsonAnyWithPathSupportImpl, NameJsonAny>;
+using FunctionJsonAll = FunctionJsonAllWithPartSupport<NameJsonAll>;
 
 
 void registerFunctionsVisitParam(FunctionFactory & factory)
@@ -36,6 +38,7 @@ void registerFunctionsVisitParam(FunctionFactory & factory)
     factory.registerFunction<FunctionVisitParamExtractRaw>();
     factory.registerFunction<FunctionVisitParamExtractString>();
     factory.registerFunction<FunctionJsonAny>();
+    factory.registerFunction<FunctionJsonAll>();
 }
 
 }
