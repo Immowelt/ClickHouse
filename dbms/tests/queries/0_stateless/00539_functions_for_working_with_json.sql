@@ -26,3 +26,9 @@ SELECT jsonAny('{"myparam": {"nested": [1,2,3]}, "other":123}', '.myparam');
 SELECT jsonAny('{"myparam": {"nested": {"hh": "abc"}}, "other":123"}', 'myparam.nested.hh');
 SELECT jsonAny('{"myparam": {"nested": {"hh": "abc"}}, "other":123"}', 'myparam..hh');
 SELECT jsonAny('{"myparam": {"nested": {"hh": "abc"}}, "other":123"}', 'myparam.');
+-- JsonAll
+SELECT jsonAll('{"myparam": "test_string"}', 'myparam');
+SELECT jsonAll('{"myparam": 5}', 'myparam');
+SELECT jsonAll('{"myparam": {"nested": [1,2,3]}, "other":123}', 'myparam');
+SELECT jsonAll('{"myparam": {"nested": [1,2,3]}, "other":123}', 'myparam.nested');
+SELECT jsonAll('{"myparam": [{"array_test": 1}, {"array_test": 2}, {"array_test": 3}], "other":123}', 'myparam.array_test');
