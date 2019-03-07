@@ -13,8 +13,9 @@ struct NameVisitParamExtractFloat  { static constexpr auto name = "visitParamExt
 struct NameVisitParamExtractBool   { static constexpr auto name = "visitParamExtractBool"; };
 struct NameVisitParamExtractRaw    { static constexpr auto name = "visitParamExtractRaw"; };
 struct NameVisitParamExtractString { static constexpr auto name = "visitParamExtractString"; };
-struct NameJsonAny                 { static constexpr auto name = "jsonAny"; };
-struct NameJsonAll                 { static constexpr auto name = "jsonAll"; };
+struct NameJson                    { static constexpr auto name = "json"; };
+struct NameJsons                   { static constexpr auto name = "jsons"; };
+struct NameMultiJson               { static constexpr auto name = "multiJson"; };
 
 
 using FunctionVisitParamHas = FunctionsStringSearch<ExtractParamImpl<HasParam>, NameVisitParamHas>;
@@ -24,8 +25,9 @@ using FunctionVisitParamExtractFloat = FunctionsStringSearch<ExtractParamImpl<Ex
 using FunctionVisitParamExtractBool = FunctionsStringSearch<ExtractParamImpl<ExtractBool>, NameVisitParamExtractBool>;
 using FunctionVisitParamExtractRaw = FunctionsStringSearchToString<ExtractParamToStringImpl<ExtractRaw>, NameVisitParamExtractRaw>;
 using FunctionVisitParamExtractString = FunctionsStringSearchToString<ExtractParamToStringImpl<ExtractString>, NameVisitParamExtractString>;
-using FunctionJsonAny = FunctionsStringSearchToString<ExtractJsonAnyWithPathSupportImpl, NameJsonAny>;
-using FunctionJsonAll = FunctionJsonAllWithPartSupport<NameJsonAll>;
+using FunctionJson = FunctionsStringSearchToString<ExtractJsonWithPathSupportImpl, NameJson>;
+using FunctionJsons = FunctionJsonsWithPathSupport<NameJsons>;
+using FunctionMultiJson = FunctionMultiJsonWithPathSupport<NameMultiJson>;
 
 
 void registerFunctionsVisitParam(FunctionFactory & factory)
@@ -37,8 +39,9 @@ void registerFunctionsVisitParam(FunctionFactory & factory)
     factory.registerFunction<FunctionVisitParamExtractBool>();
     factory.registerFunction<FunctionVisitParamExtractRaw>();
     factory.registerFunction<FunctionVisitParamExtractString>();
-    factory.registerFunction<FunctionJsonAny>();
-    factory.registerFunction<FunctionJsonAll>();
+    factory.registerFunction<FunctionJson>();
+    factory.registerFunction<FunctionJsons>();
+    factory.registerFunction<FunctionMultiJson>();
 }
 
 }
