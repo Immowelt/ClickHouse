@@ -19,7 +19,7 @@
 
 //#include <Poco/Logger.h>
 //#include <common/logger_useful.h>
-//LOG_TRACE(&Logger::get("maxim"), "tmp_resoffsets " << temporary_res_offsets.size());
+//            LOG_TRACE(&Logger::get("maxim"), "run " << current_row_offset << " " << res_strings_chars.data());
 
 
 /** Functions for retrieving "visit parameters".
@@ -90,7 +90,7 @@ struct ExtractBool
 };
 
 
-struct ExtractJsonAny
+struct ExtractJson
 {
     static constexpr size_t bytes_on_stack = 64;
     using ExpectChars = PODArray<char, bytes_on_stack, AllocatorWithStackMemory<Allocator<false>, bytes_on_stack>>;
@@ -350,7 +350,7 @@ struct ExtractParamToStringImpl
 };
 
 
-struct ExtractJsonAnyWithPathSupportImpl
+struct ExtractJsonWithPathSupportImpl
 {
     static void vector(const ColumnString::Chars & data, const ColumnString::Offsets & offsets,
                        std::string needle,
@@ -361,7 +361,7 @@ struct ExtractJsonAnyWithPathSupportImpl
 
         if (std::string::npos == dot_pos)
         {
-            ExtractParamToStringImpl<ExtractJsonAny>::vector(
+            ExtractParamToStringImpl<ExtractJson>::vector(
                 data,
                 offsets,
                 needle,
@@ -378,14 +378,14 @@ struct ExtractJsonAnyWithPathSupportImpl
             auto temporary_res_data = std::make_shared<ColumnString::Chars>();
             auto temporary_res_offsets = std::make_shared<ColumnString::Offsets>();
             if (0 == prev_pos)
-                ExtractParamToStringImpl<ExtractJsonAny>::vector(
+                ExtractParamToStringImpl<ExtractJson>::vector(
                     data,
                     offsets,
                     needle.substr(prev_pos, dot_pos - prev_pos),
                     *temporary_res_data,
                     *temporary_res_offsets);
             else
-                ExtractParamToStringImpl<ExtractJsonAny>::vector(
+                ExtractParamToStringImpl<ExtractJson>::vector(
                         *temporary_input_data,
                         *temporary_input_offsets,
                         needle.substr(prev_pos, dot_pos - prev_pos),
@@ -398,7 +398,7 @@ struct ExtractJsonAnyWithPathSupportImpl
             prev_pos = dot_pos + 1;
             dot_pos = needle.find(".", prev_pos);
         }
-        ExtractParamToStringImpl<ExtractJsonAny>::vector(
+        ExtractParamToStringImpl<ExtractJson>::vector(
                 *temporary_input_data,
                 *temporary_input_offsets,
                 needle.substr(prev_pos, std::string::npos),
@@ -408,7 +408,7 @@ struct ExtractJsonAnyWithPathSupportImpl
 };
 
 template <typename Name>
-class FunctionJsonAllWithPartSupport : public IFunction
+class FunctionJsonsWithPathSupport : public IFunction
 {
     using Pos = const char *;
     static constexpr size_t bytes_on_stack = 64;
@@ -416,7 +416,7 @@ class FunctionJsonAllWithPartSupport : public IFunction
 
 public:
     static constexpr auto name = Name::name;
-    static FunctionPtr create(const Context &) { return std::make_shared<FunctionJsonAllWithPartSupport>(); }
+    static FunctionPtr create(const Context &) { return std::make_shared<FunctionJsonsWithPathSupport>(); }
 
     String getName() const override
     {
@@ -562,7 +562,7 @@ public:
         size_t path_arg = arguments[1];
 
         if (!block.getByPosition(path_arg).column->isColumnConst())
-            throw Exception("jsonAll currently supports only constant expressions as second argument", ErrorCodes::ILLEGAL_COLUMN);
+            throw Exception(getName() + " currently supports only constant expressions as second argument", ErrorCodes::ILLEGAL_COLUMN);
 
         const ColumnConst * needle_str =
                 checkAndGetColumnConstStringOrFixedString(block.getByPosition(path_arg).column.get());
@@ -580,7 +580,7 @@ public:
             ColumnString::Chars & temporary_res_chars = temporary_res->getChars();
             ColumnArray::Offsets & temporary_res_offsets = temporary_res->getOffsets();
 
-            ExtractJsonAnyWithPathSupportImpl::vector(json_chars, json_offsets, needle, temporary_res_chars, temporary_res_offsets);
+            ExtractJsonWithPathSupportImpl::vector(json_chars, json_offsets, needle, temporary_res_chars, temporary_res_offsets);
 
             auto col_res = ColumnArray::create(ColumnString::create());
             ColumnString & res_strings = typeid_cast<ColumnString &>(col_res->getData());
@@ -599,6 +599,219 @@ public:
                 ErrorCodes::ILLEGAL_COLUMN);
     }
 };
+
+
+template <typename Name>
+class FunctionMultiJsonWithPathSupport : public IFunction
+{
+    using Pos = const unsigned char *;
+    static constexpr size_t bytes_on_stack = 64;
+    using ExpectChars = PODArray<char, bytes_on_stack, AllocatorWithStackMemory<Allocator<false>, bytes_on_stack>>;
+
+public:
+    static constexpr auto name = Name::name;
+    static FunctionPtr create(const Context &) { return std::make_shared<FunctionMultiJsonWithPathSupport>(); }
+
+    String getName() const override
+    {
+        return name;
+    }
+
+    size_t getNumberOfArguments() const override { return 2; }
+
+    DataTypePtr getReturnTypeImpl(const DataTypes & arguments) const override
+    {
+        if (!isStringOrFixedString(arguments[0]))
+            throw Exception("Illegal type " + arguments[0]->getName() + " of first argument of function " + getName() + ". Must be String.",
+                ErrorCodes::ILLEGAL_TYPE_OF_ARGUMENT);
+
+        if (!isStringOrFixedString(arguments[1]))
+            throw Exception("Illegal type " + arguments[1]->getName() + " of second argument of function " + getName() + ". Must be String.",
+                ErrorCodes::ILLEGAL_TYPE_OF_ARGUMENT);
+
+        return std::make_shared<DataTypeArray>(std::make_shared<DataTypeString>());
+    }
+
+
+    Pos findBeginLast(Pos pos, Pos end, Pos & payload_begin, Pos & payload_last)
+    {
+        ExpectChars expects_end;
+        UInt8 current_expect_end = 0;
+
+        for (auto extract_begin = pos; pos <= end; ++pos)
+        {
+            if (*pos == current_expect_end)
+            {
+                expects_end.pop_back();
+                current_expect_end = expects_end.empty() ? 0 : expects_end.back();
+            }
+            else
+            {
+                switch (*pos)
+                {
+                    case '[':
+                        current_expect_end = ']';
+                        expects_end.push_back(current_expect_end);
+                        break;
+                    case '{':
+                        current_expect_end = '}';
+                        expects_end.push_back(current_expect_end);
+                        break;
+                    case '"' :
+                        current_expect_end = '"';
+                        expects_end.push_back(current_expect_end);
+                        break;
+                    case '\\':
+                        /// skip backslash
+                        if (pos + 1 < end && pos[1] == '"')
+                            ++pos;
+                        break;
+                    default:
+                        if (!current_expect_end && (*pos == ',' || *pos == '}'))
+                        {
+                            payload_begin = extract_begin;
+                            payload_last = pos - 1;
+                            while (payload_begin < payload_last && *payload_begin == ' ')
+                                ++payload_begin;
+                            while (payload_last > payload_begin && *payload_last == ' ')
+                                --payload_last;
+                            if (payload_begin < payload_last && *payload_begin == '"' && *payload_last == '"')
+                            {
+                                ++payload_begin;
+                                --payload_last;
+                            }
+
+                            return pos;
+                        }
+                }
+            }
+        }
+        return pos;
+    }
+
+
+    void extractJSONRecursive(
+                       Pos begin,
+                       Pos last,
+                       std::string jsonPath,
+                       size_t dot_position,
+                       size_t previous_dot_position,
+                       ColumnArray::Offsets & res_offsets,
+                       ColumnString::Chars & res_strings_chars,
+                       ColumnString::Offsets & res_strings_offsets,
+                       ColumnArray::Offset & current_row_offset)
+    {
+        std::string jsonKey;
+
+        if (std::string::npos == dot_position)
+            jsonKey = "\"" + jsonPath.substr(previous_dot_position, std::string::npos) + "\":";
+        else
+            jsonKey = "\"" + jsonPath.substr(previous_dot_position, dot_position - previous_dot_position) + "\":";
+
+        Pos pos = begin;
+
+        Volnitsky searcher(jsonKey.data(), jsonKey.size(), begin - last + 1);
+
+        /// We will search for the next occurrence in all strings at once.
+        while (pos <= last && last > (pos = searcher.search(pos, last - pos + 1)))
+        {
+            Pos payload_begin = nullptr;
+            Pos payload_last = nullptr;
+            pos = findBeginLast(pos + jsonKey.size(), last + 1, payload_begin, payload_last);
+
+            if (payload_begin && payload_last)
+            {
+                if (std::string::npos == dot_position) // no other key parts to search
+                {
+                    res_strings_chars.insert(payload_begin, payload_last + 1);
+                    res_strings_chars.push_back(0);
+
+                    res_strings_offsets.push_back(res_strings_chars.size());
+                    ++current_row_offset;
+                }
+                else
+                {
+                    extractJSONRecursive(
+                        payload_begin,
+                        payload_last,
+                        jsonPath,
+                        jsonPath.find(".", dot_position + 1),
+                        dot_position + 1,
+                        res_offsets,
+                        res_strings_chars,
+                        res_strings_offsets,
+                        current_row_offset);
+                }
+            }
+        }
+    }
+
+
+    void extractMultiJSON(const ColumnString::Chars & data, const ColumnString::Offsets & offsets,
+                       std::string needle,
+                       ColumnArray::Offsets & res_offsets,
+                       ColumnString::Chars & res_strings_chars,
+                       ColumnString::Offsets & res_strings_offsets)
+    {
+        std::size_t dot_position = needle.find(".");
+        const Pos data_begin = data.data();
+
+        ColumnArray::Offset current_row_offset = 0;
+        for(size_t row_index = 0; row_index < offsets.size(); ++row_index)
+        {
+            extractJSONRecursive(
+                           data_begin,
+                           data_begin + offsets[row_index] - 2,
+                           needle,
+                           dot_position,
+                           0,
+                           res_offsets,
+                           res_strings_chars,
+                           res_strings_offsets,
+                           current_row_offset);
+            res_offsets.push_back(current_row_offset);
+        }
+    }
+
+
+    void executeImpl(Block & block, const ColumnNumbers & arguments, size_t result, size_t /*input_rows_count*/) override
+    {
+        size_t json_arg = arguments[0];
+        size_t path_arg = arguments[1];
+
+        if (!block.getByPosition(path_arg).column->isColumnConst())
+            throw Exception(getName() + " currently supports only constant expressions as second argument", ErrorCodes::ILLEGAL_COLUMN);
+
+        const ColumnConst * needle_str =
+                checkAndGetColumnConstStringOrFixedString(block.getByPosition(path_arg).column.get());
+        String needle = needle_str->getValue<String>();
+
+        const auto maybe_const = block.getByPosition(json_arg).column.get()->convertToFullColumnIfConst();
+        const ColumnString * json_str = checkAndGetColumn<ColumnString>(maybe_const.get());
+
+        if (json_str)
+        {
+            const ColumnString::Chars & json_chars = json_str->getChars();
+            const ColumnString::Offsets & json_offsets = json_str->getOffsets();
+
+            auto col_res = ColumnArray::create(ColumnString::create());
+            ColumnString & res_strings = typeid_cast<ColumnString &>(col_res->getData());
+            ColumnArray::Offsets & res_offsets = col_res->getOffsets();
+            ColumnString::Chars & res_strings_chars = res_strings.getChars();
+            ColumnString::Offsets & res_strings_offsets = res_strings.getOffsets();
+
+            extractMultiJSON(json_chars, json_offsets, needle, res_offsets, res_strings_chars, res_strings_offsets);
+
+            block.getByPosition(result).column = std::move(col_res);
+        }
+        else
+            throw Exception("Illegal columns " + block.getByPosition(0).column->getName()
+                    + ", " + block.getByPosition(1).column->getName()
+                    + " of arguments of function " + getName(),
+                ErrorCodes::ILLEGAL_COLUMN);
+    }
+};
+
 
 
 }
