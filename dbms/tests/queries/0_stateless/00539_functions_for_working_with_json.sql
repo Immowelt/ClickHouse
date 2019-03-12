@@ -36,4 +36,4 @@ SELECT jsonAnyArray('{"myparam": [{"array_test": 1}, {"array_test": 2}, {"array_
 SELECT jsonAll('{"myparam": [{"A": 1, "B": [{"leaf": 14},{"leaf": 15},{"leaf": 16}]}, {"A": 2, "B": [{"leaf": 24},{"leaf": 25},{"leaf": 26}]}, {"A": 3, "B": [{"leaf": 34},{"leaf": 35},{"leaf": 36}]}]}', 'myparam.A');
 SELECT jsonAll('{"myparam": [{"A": 1, "B": [{"leaf": 14},{"leaf": 15},{"leaf": 16}]}, {"A": 2, "B": [{"leaf": 24},{"leaf": 25},{"leaf": 26}]}, {"A": 3, "B": [{"leaf": 34},{"leaf": 35},{"leaf": 36}]}]}', 'myparam.B.leaf');
 -- jsonAllArrays
-SELECT jsonAllArrays('{"myparam": [{"A": 1, "B": [17,18,19]}, {"A": 2, "B": [27,28,29]}, {"A": 3, "B": [37,38,39]}', 'myparam.B');
+SELECT jsonAllArrays('{"myparam": [{"A": 1, "B": [17,18,19]}, {"A": 2, "B": [27,28,29]}, {"A": 3, "B": [37,38,39]}]}', 'myparam.B');
