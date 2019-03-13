@@ -32,6 +32,7 @@ SELECT jsonAnyArray('{"myparam": 5}', 'myparam');
 SELECT jsonAnyArray('{"myparam": {"nested": [1,2,3]}, "other":123}', 'myparam');
 SELECT jsonAnyArray('{"myparam": {"nested": [1,2,3]}, "other":123}', 'myparam.nested');
 SELECT jsonAnyArray('{"myparam": [{"array_test": 1}, {"array_test": 2}, {"array_test": 3}], "other":123}', 'myparam.array_test');
+SELECT jsonAnyArray('{"myparam": []}', 'myparam');
 -- jsonAll
 SELECT jsonAll('{"myparam": [{"A": 1, "B": [{"leaf": 14},{"leaf": 15},{"leaf": 16}]}, {"A": 2, "B": [{"leaf": 24},{"leaf": 25},{"leaf": 26}]}, {"A": 3, "B": [{"leaf": 34},{"leaf": 35},{"leaf": 36}]}]}', 'myparam.A');
 SELECT jsonAll('{"myparam": [{"A": 1, "B": [{"leaf": 14},{"leaf": 15},{"leaf": 16}]}, {"A": 2, "B": [{"leaf": 24},{"leaf": 25},{"leaf": 26}]}, {"A": 3, "B": [{"leaf": 34},{"leaf": 35},{"leaf": 36}]}]}', 'myparam.B.leaf');
